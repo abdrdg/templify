@@ -142,10 +142,11 @@ class InvitationGeneratorApp(ctk.CTk):
 
 	def extract_placeholders(self, docx_path):
 		"""
-		Extract placeholders from all XML files in the .docx archive using regex.
+		Extract placeholders from all XML files in the .docx archive, including those split across runs.
 		Returns a list of unique placeholder names.
 		"""
 		import zipfile
+		import xml.etree.ElementTree as ET
 		found = set()
 		with zipfile.ZipFile(docx_path) as docx_zip:
 			for file in docx_zip.namelist():
@@ -155,7 +156,19 @@ class InvitationGeneratorApp(ctk.CTk):
 							xml = xml_file.read().decode('utf-8')
 						except Exception:
 							continue
-						found.update(re.findall(r'{{\s*(\w+)\s*}}', xml))
+						# Join all <w:t> text nodes for robust placeholder extraction
+						try:
+							root = ET.fromstring(xml)
+							texts = []
+							for elem in root.iter():
+								# Word text node
+								if elem.tag.endswith('}t'):
+									texts.append(elem.text or '')
+							joined_text = ''.join(texts)
+							found.update(re.findall(r'{{\s*(\w+)\s*}}', joined_text))
+						except Exception:
+							# Fallback: regex on raw xml
+							found.update(re.findall(r'{{\s*(\w+)\s*}}', xml))
 		self.log(f"Found placeholders: {', '.join(found)}")
 		return list(found)
 
