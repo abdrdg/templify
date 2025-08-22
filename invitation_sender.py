@@ -210,7 +210,16 @@ class InvitationSenderApp(ctk.CTk):
                     img_data = img.read()
                     image = MIMEImage(img_data, name=os.path.basename(img_filename))
                     image.add_header('Content-ID', cid)
-                    msg.get_payload()[1].add_related(image)
+                    # Find the HTML part robustly
+                    html_part = None
+                    for part in msg.iter_parts():
+                        if part.get_content_type() == 'text/html':
+                            html_part = part
+                            break
+                    if html_part is not None:
+                        html_part.add_related(image)
+                    else:
+                        self.log(f"[ERROR] Could not find HTML part to attach image for {recipient}")
 
                 with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
                     smtp.login(sender_email, sender_pass)
