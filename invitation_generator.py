@@ -19,7 +19,15 @@ class Attendee:
 
 	def get_context(self, mapping):
 		# mapping: {placeholder: excel_column}
-		return {ph: self.data.get(col, "") for ph, col in mapping.items()}
+		context = {}
+		for ph, col in mapping.items():
+			value = self.data.get(col, "")
+			# Convert None to empty string and strip whitespace
+			if value is None or str(value).strip() == "":
+				context[ph] = ""
+			else:
+				context[ph] = str(value).strip()
+		return context
 
 	def get_filename(self):
 		# Use Name or fallback to first column
