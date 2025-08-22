@@ -7,6 +7,8 @@ from email.mime.image import MIMEImage
 import os
 
 import tkinter.filedialog as fd
+import json
+from datetime import datetime
 
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
@@ -26,7 +28,43 @@ class InvitationSenderApp(ctk.CTk):
         self.email_column_var = ctk.StringVar()
         self.name_column_var = ctk.StringVar()
         self.images_folder = os.getcwd()  # Default to current working directory
+        
+        # Initialize sent invitations tracking
+        self.tracking_file = "sent_invitations.json"
+        self.sent_invitations = self.load_sent_invitations()
+        
         self.create_widgets()
+        
+    def load_sent_invitations(self):
+        """Load the record of sent invitations from JSON file"""
+        if os.path.exists(self.tracking_file):
+            try:
+                with open(self.tracking_file, 'r') as f:
+                    return json.load(f)
+            except json.JSONDecodeError:
+                self.log("Warning: Tracking file corrupted, starting fresh.")
+                return {}
+        return {}
+        
+    def save_sent_invitations(self):
+        """Save the record of sent invitations to JSON file"""
+        with open(self.tracking_file, 'w') as f:
+            json.dump(self.sent_invitations, f, indent=2)
+            
+    def was_invitation_sent(self, email, name):
+        """Check if an invitation was already sent to this person"""
+        key = f"{email}|{name}"
+        return key in self.sent_invitations
+        
+    def mark_invitation_sent(self, email, name):
+        """Mark an invitation as sent for this person"""
+        key = f"{email}|{name}"
+        self.sent_invitations[key] = {
+            "email": email,
+            "name": name,
+            "sent_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        self.save_sent_invitations()
 
     def create_widgets(self):
         # Use a main frame to control layout and allow expansion
@@ -178,10 +216,18 @@ class InvitationSenderApp(ctk.CTk):
 
         sent_count = 0
         failed = []
+        skipped = 0
         self.log(f"Starting to send invitations from {sender_email}...")
         for idx, row in self.invitees.iterrows():
             name = self.clean_name(str(row[name_col]).strip())
             recipient = str(row[email_col]).strip()
+            
+            # Check if invitation was already sent
+            if self.was_invitation_sent(recipient, name):
+                self.log(f"[SKIPPED] Already sent to {name} ({recipient})")
+                skipped += 1
+                continue
+                
             img_filename = os.path.join(self.images_folder, f"Invitation - {name}.png")
             if not os.path.exists(img_filename):
                 failed.append((recipient, "Invitation image not found"))
@@ -225,12 +271,15 @@ class InvitationSenderApp(ctk.CTk):
                     smtp.login(sender_email, sender_pass)
                     smtp.send_message(msg)
                 sent_count += 1
+                self.mark_invitation_sent(recipient, name)
                 self.log(f"[{recipient}] Invitation sent successfully.")
             except Exception as e:
                 failed.append((recipient, str(e)))
                 self.log(f"[{recipient}] Failed to send: {e}")
 
         result_msg = f"Sent: {sent_count} invitations."
+        if skipped:
+            result_msg += f"\nSkipped (already sent): {skipped}"
         if failed:
             result_msg += f"\nFailed: {len(failed)}"
         self.result_label.configure(text=result_msg, text_color="green" if sent_count else "red")
