@@ -114,6 +114,22 @@ class InvitationSenderApp(ctk.CTk):
         self.pass_entry = ctk.CTkEntry(main_frame, show="*", width=300)
         self.pass_entry.pack()
 
+        # Invitees list with status
+        status_frame = ctk.CTkFrame(main_frame)
+        status_frame.pack(fill="x", padx=2, pady=(10,5))
+        
+        # Header
+        header_frame = ctk.CTkFrame(status_frame)
+        header_frame.pack(fill="x", padx=5, pady=(5,0))
+        ctk.CTkLabel(header_frame, text="Invitees Status", font=("Arial", 14, "bold")).pack(side="left")
+        self.refresh_btn = ctk.CTkButton(header_frame, text="Refresh", width=80, command=self.update_status_list)
+        self.refresh_btn.pack(side="right", padx=5)
+        
+        # Scrollable frame for invitees
+        self.scrollable_frame = ctk.CTkScrollableFrame(status_frame, height=150)
+        self.scrollable_frame.pack(fill="x", padx=5, pady=5)
+        self.status_labels = {}  # Store labels for updating
+
         # Log area (scrollable textbox)
         self.log_label = ctk.CTkLabel(main_frame, text="Log:", font=("Arial", 12))
         self.log_label.pack(pady=(10,0), anchor="w")
@@ -156,6 +172,58 @@ class InvitationSenderApp(ctk.CTk):
         self.log_textbox.see("end")
         self.log_textbox.configure(state="disabled")
 
+    def clear_status_list(self):
+        """Clear all status labels"""
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+        self.status_labels = {}
+
+    def update_status_list(self):
+        """Update the status list with current invitees"""
+        self.clear_status_list()
+        if not hasattr(self, 'invitees') or self.invitees is None:
+            return
+
+        email_col = self.email_column_var.get()
+        name_col = self.name_column_var.get()
+        if not email_col or not name_col:
+            return
+
+        for idx, row in self.invitees.iterrows():
+            name = self.clean_name(str(row[name_col]).strip())
+            email = str(row[email_col]).strip()
+            
+            # Create frame for this invitee
+            frame = ctk.CTkFrame(self.scrollable_frame)
+            frame.pack(fill="x", padx=2, pady=1)
+            
+            # Name and email
+            info_text = f"{name} ({email})"
+            ctk.CTkLabel(frame, text=info_text, anchor="w").pack(side="left", padx=5)
+            
+            # Status label
+            status_label = ctk.CTkLabel(frame, text="", anchor="e")
+            status_label.pack(side="right", padx=5)
+            
+            # Store label reference for updates
+            self.status_labels[f"{email}|{name}"] = status_label
+            
+            # Update status
+            self.update_invitee_status(email, name)
+
+    def update_invitee_status(self, email, name):
+        """Update the status display for a single invitee"""
+        key = f"{email}|{name}"
+        if key not in self.status_labels:
+            return
+            
+        label = self.status_labels[key]
+        if self.was_invitation_sent(email, name):
+            sent_date = self.sent_invitations[key]["sent_date"]
+            label.configure(text=f"Sent on {sent_date}", text_color="green")
+        else:
+            label.configure(text="Not sent", text_color="gray")
+
     def open_excel(self):
         file_path = fd.askopenfilename(filetypes=[("Excel Files", "*.xlsx *.xls")])
         if file_path:
@@ -183,6 +251,7 @@ class InvitationSenderApp(ctk.CTk):
                 self.status_label.configure(text=f"Loaded {len(self.invitees)} invitees.", text_color="green")
                 self.send_btn.configure(state="normal")
                 self.log(f"Loaded {len(self.invitees)} invitees from Excel.")
+                self.update_status_list()
             except Exception as e:
                 self.status_label.configure(text=f"Error: {e}", text_color="red")
                 self.send_btn.configure(state="disabled")
@@ -272,6 +341,7 @@ class InvitationSenderApp(ctk.CTk):
                     smtp.send_message(msg)
                 sent_count += 1
                 self.mark_invitation_sent(recipient, name)
+                self.update_invitee_status(recipient, name)
                 self.log(f"[{recipient}] Invitation sent successfully.")
             except Exception as e:
                 failed.append((recipient, str(e)))
