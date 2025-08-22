@@ -5,6 +5,8 @@ from email.message import EmailMessage
 from email.utils import make_msgid
 from email.mime.image import MIMEImage
 import os
+import threading
+import queue
 
 import tkinter.filedialog as fd
 import json
@@ -74,6 +76,18 @@ class InvitationSenderApp(ctk.CTk):
 
         self.label = ctk.CTkLabel(main_frame, text="Send Email Invitations", font=("Arial", 22))
         self.label.pack(pady=10)
+        
+        # Progress bar (hidden by default)
+        self.progress_frame = ctk.CTkFrame(main_frame)
+        self.progress_frame.pack(pady=5, fill="x", padx=20)
+        self.progress_frame.pack_forget()  # Hide initially
+        
+        self.progress_bar = ctk.CTkProgressBar(self.progress_frame)
+        self.progress_bar.pack(fill="x", pady=5)
+        self.progress_bar.set(0)
+        
+        self.progress_label = ctk.CTkLabel(self.progress_frame, text="")
+        self.progress_label.pack(pady=(0, 5))
 
 
         # Folder selection for invitation images
@@ -269,11 +283,114 @@ class InvitationSenderApp(ctk.CTk):
         # Remove dots from middle initials and handle multiple spaces
         return ' '.join(part.replace('.', '') for part in name.split())
 
+    def update_progress(self, current, total, message=""):
+        """Update the progress bar and label"""
+        progress = current / total if total > 0 else 0
+        self.progress_bar.set(progress)
+        self.progress_label.configure(text=message)
+
+    def send_single_invitation(self, sender_email, sender_pass, name, recipient, img_filename):
+        """Send a single invitation and return the result"""
+        try:
+            msg = EmailMessage()
+            msg["Subject"] = "Invitation to the National Day and Armed Forces Day of the Republic of Korea"
+            msg["From"] = sender_email
+            msg["To"] = recipient
+            cid = make_msgid(domain="xyz.com")
+            msg.add_alternative(f"""\
+            <html>
+              <head>
+                <style>
+                  img {{ max-width: 900px; width: 100%; height: auto; }}
+                </style>
+              </head>
+              <body>
+                <img src=\"cid:{cid[1:-1]}\" style="width: 900px; max-width: 100%; height: auto;">
+              </body>
+            </html>
+            """, subtype='html')
+
+            with open(img_filename, 'rb') as img:
+                img_data = img.read()
+                image = MIMEImage(img_data, name=os.path.basename(img_filename))
+                image.add_header('Content-ID', cid)
+                html_part = None
+                for part in msg.iter_parts():
+                    if part.get_content_type() == 'text/html':
+                        html_part = part
+                        break
+                if html_part is not None:
+                    html_part.add_related(image)
+                else:
+                    return False, "Could not find HTML part to attach image"
+
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+                smtp.login(sender_email, sender_pass)
+                smtp.send_message(msg)
+            return True, None
+        except Exception as e:
+            return False, str(e)
+
+    def send_invitations_thread(self, sender_email, sender_pass, email_col, name_col):
+        """Thread function for sending invitations"""
+        sent_count = 0
+        failed = []
+        skipped = 0
+        total = len(self.invitees)
+        
+        for idx, row in self.invitees.iterrows():
+            name = self.clean_name(str(row[name_col]).strip())
+            recipient = str(row[email_col]).strip()
+            
+            # Update progress in the main thread
+            self.after(0, self.update_progress, idx + 1, total, f"Processing: {name} ({recipient})")
+            
+            # Check if invitation was already sent
+            if self.was_invitation_sent(recipient, name):
+                self.after(0, self.log, f"[SKIPPED] Already sent to {name} ({recipient})")
+                skipped += 1
+                continue
+                
+            img_filename = os.path.join(self.images_folder, f"Invitation - {name}.png")
+            if not os.path.exists(img_filename):
+                failed.append((recipient, "Invitation image not found"))
+                self.after(0, self.log, f"[{recipient}] Invitation image not found: {img_filename}")
+                continue
+
+            success, error = self.send_single_invitation(sender_email, sender_pass, name, recipient, img_filename)
+            if success:
+                sent_count += 1
+                self.mark_invitation_sent(recipient, name)
+                self.after(0, self.update_invitee_status, recipient, name)
+                self.after(0, self.log, f"[{recipient}] Invitation sent successfully.")
+            else:
+                failed.append((recipient, error))
+                self.after(0, self.log, f"[{recipient}] Failed to send: {error}")
+
+        # Update final results in the main thread
+        self.after(0, self.finish_sending, sent_count, skipped, failed)
+
+    def finish_sending(self, sent_count, skipped, failed):
+        """Update UI after sending is complete"""
+        result_msg = f"Sent: {sent_count} invitations."
+        if skipped:
+            result_msg += f"\nSkipped (already sent): {skipped}"
+        if failed:
+            result_msg += f"\nFailed: {len(failed)}"
+        
+        self.result_label.configure(text=result_msg, text_color="green" if sent_count else "red")
+        self.log(result_msg)
+        
+        # Re-enable the send button and hide progress
+        self.send_btn.configure(state="normal")
+        self.progress_frame.pack_forget()
+
     def send_invitations(self):
         sender_email = self.email_entry.get().strip()
         sender_pass = self.pass_entry.get().strip()
         email_col = self.email_column_var.get()
         name_col = self.name_column_var.get()
+        
         if not sender_email or not sender_pass:
             self.result_label.configure(text="Enter sender email and app password.", text_color="red")
             self.log("Sender email or app password missing.")
@@ -283,77 +400,17 @@ class InvitationSenderApp(ctk.CTk):
             self.log("Email or name column not selected.")
             return
 
-        sent_count = 0
-        failed = []
-        skipped = 0
+        # Show progress bar and disable send button
+        self.progress_frame.pack(after=self.label)
+        self.send_btn.configure(state="disabled")
         self.log(f"Starting to send invitations from {sender_email}...")
-        for idx, row in self.invitees.iterrows():
-            name = self.clean_name(str(row[name_col]).strip())
-            recipient = str(row[email_col]).strip()
-            
-            # Check if invitation was already sent
-            if self.was_invitation_sent(recipient, name):
-                self.log(f"[SKIPPED] Already sent to {name} ({recipient})")
-                skipped += 1
-                continue
-                
-            img_filename = os.path.join(self.images_folder, f"Invitation - {name}.png")
-            if not os.path.exists(img_filename):
-                failed.append((recipient, "Invitation image not found"))
-                self.log(f"[{recipient}] Invitation image not found: {img_filename}")
-                continue
-            try:
-                msg = EmailMessage()
-                msg["Subject"] = "Invitation to the National Day and Armed Forces Day of the Republic of Korea"
-                msg["From"] = sender_email
-                msg["To"] = recipient
-                cid = make_msgid(domain="xyz.com")
-                msg.add_alternative(f"""\
-                <html>
-                  <head>
-                    <style>
-                      img {{ max-width: 900px; width: 100%; height: auto; }}
-                    </style>
-                  </head>
-                  <body>
-                    <img src=\"cid:{cid[1:-1]}\" style="width: 900px; max-width: 100%; height: auto;">
-                  </body>
-                </html>
-                """, subtype='html')
-
-                with open(img_filename, 'rb') as img:
-                    img_data = img.read()
-                    image = MIMEImage(img_data, name=os.path.basename(img_filename))
-                    image.add_header('Content-ID', cid)
-                    # Find the HTML part robustly
-                    html_part = None
-                    for part in msg.iter_parts():
-                        if part.get_content_type() == 'text/html':
-                            html_part = part
-                            break
-                    if html_part is not None:
-                        html_part.add_related(image)
-                    else:
-                        self.log(f"[ERROR] Could not find HTML part to attach image for {recipient}")
-
-                with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-                    smtp.login(sender_email, sender_pass)
-                    smtp.send_message(msg)
-                sent_count += 1
-                self.mark_invitation_sent(recipient, name)
-                self.update_invitee_status(recipient, name)
-                self.log(f"[{recipient}] Invitation sent successfully.")
-            except Exception as e:
-                failed.append((recipient, str(e)))
-                self.log(f"[{recipient}] Failed to send: {e}")
-
-        result_msg = f"Sent: {sent_count} invitations."
-        if skipped:
-            result_msg += f"\nSkipped (already sent): {skipped}"
-        if failed:
-            result_msg += f"\nFailed: {len(failed)}"
-        self.result_label.configure(text=result_msg, text_color="green" if sent_count else "red")
-        self.log(result_msg)
+        
+        # Start sending thread
+        threading.Thread(
+            target=self.send_invitations_thread,
+            args=(sender_email, sender_pass, email_col, name_col),
+            daemon=True
+        ).start()
 
 if __name__ == "__main__":
     app = InvitationSenderApp()
