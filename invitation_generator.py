@@ -6,6 +6,8 @@ import urllib.request
 import zipfile
 import re
 import threading
+import json
+from datetime import datetime
 
 # Third-party imports
 from pdf2image import convert_from_path
@@ -95,6 +97,10 @@ class InvitationGeneratorApp(ctk.CTk):
 		self.placeholders = []
 		self.excel_columns = []
 		self.mapping_vars = {}
+
+		# Initialize generation tracking
+		self.tracking_file = "generated_invitations.json"
+		self.generated_invitations = self.load_generated_invitations()
 
 		# UI Elements
 		self.create_widgets()
@@ -228,6 +234,37 @@ class InvitationGeneratorApp(ctk.CTk):
 		self.log_text.see("end")
 		self.log_text.configure(state="disabled")
 
+	def load_generated_invitations(self):
+		"""Load the record of generated invitations from JSON file"""
+		if os.path.exists(self.tracking_file):
+			try:
+				with open(self.tracking_file, 'r') as f:
+					return json.load(f)
+			except json.JSONDecodeError:
+				self.log("Warning: Generation tracking file corrupted, starting fresh.")
+				return {}
+		return {}
+
+	def save_generated_invitations(self):
+		"""Save the record of generated invitations to JSON file"""
+		try:
+			with open(self.tracking_file, 'w') as f:
+				json.dump(self.generated_invitations, f, indent=2)
+		except Exception as e:
+			self.log(f"Warning: Could not save generation tracking: {e}")
+
+	def was_invitation_generated(self, name):
+		"""Check if invitation was already generated for this person"""
+		return name in self.generated_invitations
+
+	def mark_invitation_generated(self, name, output_folder):
+		"""Mark invitation as generated for this person"""
+		self.generated_invitations[name] = {
+			"generated_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+			"output_folder": output_folder
+		}
+		self.save_generated_invitations()
+
 	def generate_invitations(self):
 		# Start generation in a separate thread to keep UI responsive
 		thread = threading.Thread(target=self._generate_invitations_thread, daemon=True)
@@ -267,41 +304,63 @@ class InvitationGeneratorApp(ctk.CTk):
 			poppler_path = ensure_poppler()
 
 		# Generate invitations
+		generated_count = 0
+		skipped_count = 0
 		for idx, row in enumerate(rows, 1):
 			data = dict(zip(columns, row))
 			attendee = Attendee(data)
 			context = attendee.get_context(mapping)
+			filename = attendee.get_filename()
+			
+			# Check if invitation was already generated
+			if self.was_invitation_generated(filename):
+				self.log(f"[SKIPPED] Already generated for {filename}")
+				skipped_count += 1
+				self.after(0, self.progress.set, idx / total)
+				continue
+				
 			try:
 				doc = DocxTemplate(template_path)
 				doc.render(context)
-				filename = attendee.get_filename()
 				out_docx = os.path.join(output_folder, f"Invitation - {filename}.docx")
 				out_pdf = os.path.join(output_folder, f"Invitation - {filename}.pdf")
 				out_png = os.path.join(output_folder, f"Invitation - {filename}.png")
 				doc.save(out_docx)
 				self.log(f"Saved: {out_docx}")
+				
 				# Convert DOCX to PDF
+				pdf_success = False
 				try:
 					docx2pdf_convert(out_docx, output_folder)
 					self.log(f"PDF created: {out_pdf}")
+					pdf_success = True
 				except Exception as e:
 					self.log(f"PDF conversion failed: {e}")
 					out_pdf = None
+				
 				# Convert PDF to PNG (first page)
+				png_success = False
 				if out_pdf and os.path.exists(out_pdf):
 					try:
 						images = convert_from_path(out_pdf, dpi=200, fmt='png', poppler_path=poppler_path)
 						if images:
 							images[0].save(out_png, 'PNG')
 							self.log(f"PNG created: {out_png}")
+							png_success = True
 					except Exception as e:
 						self.log(f"PNG conversion failed: {e}")
+				
+				# Mark as generated only if at least the DOCX was created successfully
+				self.mark_invitation_generated(filename, output_folder)
+				generated_count += 1
+				
 			except Exception as e:
 				self.log(f"Error for row {idx}: {e}")
+			
 			# Update progress on main thread
 			self.after(0, self.progress.set, idx / total)
 
-		self.log("Generation complete.")
+		self.log(f"Generation complete. Generated: {generated_count}, Skipped: {skipped_count}")
 
 if __name__ == "__main__":
 	app = InvitationGeneratorApp()
