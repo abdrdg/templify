@@ -86,7 +86,7 @@ class InvitationSenderApp(ctk.CTk):
         
         # Left column - Controls
         left_column = ctk.CTkFrame(columns_frame)
-        left_column.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        left_column.pack(side="left", fill="both", expand=False, padx=(0, 5))
         
         # Right column - Invitees list
         right_column = ctk.CTkFrame(columns_frame)
@@ -162,13 +162,7 @@ class InvitationSenderApp(ctk.CTk):
         # Invitees list with status
         ctk.CTkLabel(right_column, text="Invitees Status", font=("Arial", 16, "bold")).pack(pady=(10, 5))
         
-        # Header with refresh button
-        header_frame = ctk.CTkFrame(right_column)
-        header_frame.pack(fill="x", padx=10, pady=(0, 5))
-        self.refresh_btn = ctk.CTkButton(header_frame, text="Refresh", width=80, command=self.update_status_list)
-        self.refresh_btn.pack(side="right", padx=5)
-        
-        # Selection buttons frame
+        # Selection and refresh buttons frame
         selection_frame = ctk.CTkFrame(right_column)
         selection_frame.pack(fill="x", padx=10, pady=(0, 5))
         self.select_all_btn = ctk.CTkButton(selection_frame, text="Select All", width=80, command=self.select_all_invitees)
@@ -177,6 +171,8 @@ class InvitationSenderApp(ctk.CTk):
         self.select_none_btn.pack(side="left", padx=2)
         self.select_unsent_btn = ctk.CTkButton(selection_frame, text="Select Unsent", width=90, command=self.select_unsent_invitees)
         self.select_unsent_btn.pack(side="left", padx=2)
+        self.refresh_btn = ctk.CTkButton(selection_frame, text="Refresh", width=80, command=self.update_status_list)
+        self.refresh_btn.pack(side="right", padx=5)
         
         # Scrollable frame for invitees - takes up most of the right column
         self.scrollable_frame = ctk.CTkScrollableFrame(right_column)
@@ -209,7 +205,7 @@ class InvitationSenderApp(ctk.CTk):
         )
         self.send_btn.pack(pady=5, fill="x", padx=10)
 
-        self.result_label = ctk.CTkLabel(send_frame, text="", font=("Arial", 12))
+        self.result_label = ctk.CTkLabel(send_frame, text="...", font=("Arial", 12))
         self.result_label.pack(pady=(0, 5))
 
     def select_folder(self):
