@@ -102,6 +102,9 @@ class InvitationGeneratorApp(ctk.CTk):
 		# Initialize generation tracking
 		self.tracking_file = "generated_invitations.json"
 		self.generated_invitations = self.load_generated_invitations()
+		
+		# Cancel flag for generation process
+		self.is_generating = False
 
 		# Initialize selection tracking for invitees
 		self.selected_invitees = {}  # Dictionary to track checkbox states
@@ -447,11 +450,32 @@ class InvitationGeneratorApp(ctk.CTk):
 		self.save_generated_invitations()
 
 	def generate_invitations(self):
+		if self.is_generating:
+			# Cancel generation
+			self.is_generating = False
+			self.log("Generation cancelled by user.")
+			self.reset_generate_button()
+			return
+			
 		# Start generation in a separate thread to keep UI responsive
+		self.is_generating = True
+		self.generate_btn.configure(text="Cancel", fg_color="red")
 		thread = threading.Thread(target=self._generate_invitations_thread, daemon=True)
 		thread.start()
 
+	def reset_generate_button(self):
+		"""Reset the generate button to its original state"""
+		self.is_generating = False
+		self.generate_btn.configure(text="Generate Invitations", fg_color=["#1f538d", "#14375e"])
+
 	def _generate_invitations_thread(self):
+		try:
+			self._do_generation()
+		finally:
+			# Always reset the button when generation ends
+			self.after(0, self.reset_generate_button)
+	
+	def _do_generation(self):
 		self.log("Generation started...")
 		template_path = self.template_path.get()
 		excel_path = self.excel_path.get()
@@ -499,6 +523,11 @@ class InvitationGeneratorApp(ctk.CTk):
 		current_processed = 0
 
 		for idx in selected_indices:
+			# Check for cancellation
+			if not self.is_generating:
+				self.log("Generation cancelled.")
+				return
+				
 			current_processed += 1
 			row = self.invitees.iloc[idx]
 			data = row.to_dict()
