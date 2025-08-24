@@ -37,6 +37,7 @@ class InvitationSenderApp(ctk.CTk):
         
         # Initialize selection tracking
         self.selected_invitees = {}  # Dictionary to track checkbox states
+        self.valid_email_invitees = {}  # Dictionary to track which invitees have valid emails
         
         self.create_widgets()
         
@@ -225,10 +226,15 @@ class InvitationSenderApp(ctk.CTk):
         self.log_textbox.configure(state="disabled")
 
     def select_all_invitees(self):
-        """Select all invitees for sending"""
-        for key in self.selected_invitees:
-            self.selected_invitees[key].set(True)
-        self.log("All invitees selected.")
+        """Select all invitees with valid emails for sending"""
+        count = 0
+        for key, checkbox_var in self.selected_invitees.items():
+            if self.valid_email_invitees.get(key, False):  # Only select if email is valid
+                checkbox_var.set(True)
+                count += 1
+            else:
+                checkbox_var.set(False)  # Ensure invalid emails stay deselected
+        self.log(f"Selected {count} invitees with valid emails.")
 
     def select_none_invitees(self):
         """Deselect all invitees"""
@@ -237,16 +243,20 @@ class InvitationSenderApp(ctk.CTk):
         self.log("All invitees deselected.")
 
     def select_unsent_invitees(self):
-        """Select only invitees who haven't been sent invitations yet"""
+        """Select only invitees with valid emails who haven't been sent invitations yet"""
         count = 0
         for key, checkbox_var in self.selected_invitees.items():
             email, name = key.split("|", 1)
-            if not self.was_invitation_sent(email, name):
-                checkbox_var.set(True)
-                count += 1
+            # Only consider invitees with valid emails
+            if self.valid_email_invitees.get(key, False):
+                if not self.was_invitation_sent(email, name):
+                    checkbox_var.set(True)
+                    count += 1
+                else:
+                    checkbox_var.set(False)
             else:
-                checkbox_var.set(False)
-        self.log(f"Selected {count} unsent invitees.")
+                checkbox_var.set(False)  # Ensure invalid emails stay deselected
+        self.log(f"Selected {count} unsent invitees with valid emails.")
 
     def clear_status_list(self):
         """Clear all status labels and selection tracking"""
@@ -254,6 +264,7 @@ class InvitationSenderApp(ctk.CTk):
             widget.destroy()
         self.status_labels = {}
         self.selected_invitees = {}
+        self.valid_email_invitees = {}
 
     def update_status_list(self):
         """Update the status list with current invitees and checkboxes"""
@@ -267,25 +278,47 @@ class InvitationSenderApp(ctk.CTk):
             return
 
         for idx, row in self.invitees.iterrows():
-            name = self.clean_name(str(row[name_col]).strip())
-            email = str(row[email_col]).strip()
+            name_raw = row[name_col] if pd.notna(row[name_col]) else "Unknown"
+            name = self.clean_name(str(name_raw).strip())
+            email_raw = row[email_col] if pd.notna(row[email_col]) else ""
+            email = str(email_raw).strip()
+            
+            # Check if email is valid
+            has_valid_email = self.is_valid_email(email)
             key = f"{email}|{name}"
             
             # Create frame for this invitee
             frame = ctk.CTkFrame(self.scrollable_frame)
             frame.pack(fill="x", padx=2, pady=1)
             
-            # Checkbox for selection
+            # Checkbox for selection - disabled if no valid email
             checkbox_var = ctk.BooleanVar()
-            checkbox = ctk.CTkCheckBox(frame, text="", variable=checkbox_var, width=20)
+            checkbox = ctk.CTkCheckBox(
+                frame, 
+                text="", 
+                variable=checkbox_var, 
+                width=20,
+                state="normal" if has_valid_email else "disabled"
+            )
             checkbox.pack(side="left", padx=5)
             
-            # Store checkbox variable for later use
+            # Store checkbox variable and email validity for later use
             self.selected_invitees[key] = checkbox_var
+            self.valid_email_invitees[key] = has_valid_email
             
-            # Name and email
-            info_text = f"{name} ({email})"
-            ctk.CTkLabel(frame, text=info_text, anchor="w").pack(side="left", padx=5, fill="x", expand=True)
+            # Name and email display
+            if has_valid_email:
+                info_text = f"{name} ({email})"
+                text_color = None  # Default color
+            else:
+                if not email or email.lower() in ['nan', 'none']:
+                    info_text = f"{name} (No email address)"
+                else:
+                    info_text = f"{name} ({email} - Invalid email)"
+                text_color = "gray"
+            
+            info_label = ctk.CTkLabel(frame, text=info_text, anchor="w", text_color=text_color)
+            info_label.pack(side="left", padx=5, fill="x", expand=True)
             
             # Status label
             status_label = ctk.CTkLabel(frame, text="", anchor="e", width=120)
@@ -294,10 +327,14 @@ class InvitationSenderApp(ctk.CTk):
             # Store label reference for updates
             self.status_labels[key] = status_label
             
-            # Update status and default to select unsent invitees
-            is_sent = self.was_invitation_sent(email, name)
-            self.update_invitee_status(email, name)
-            checkbox_var.set(not is_sent)  # Select unsent invitees by default
+            # Update status and set checkbox state
+            if not has_valid_email:
+                status_label.configure(text="Cannot send", text_color="red")
+                checkbox_var.set(False)  # Don't select invalid emails
+            else:
+                is_sent = self.was_invitation_sent(email, name)
+                self.update_invitee_status(email, name)
+                checkbox_var.set(not is_sent)  # Select unsent invitees by default
 
     def update_invitee_status(self, email, name):
         """Update the status display for a single invitee"""
@@ -334,11 +371,23 @@ class InvitationSenderApp(ctk.CTk):
                 name_guess = next((c for c in columns if 'name' in c.lower()), columns[0])
                 self.email_column_var.set(email_guess)
                 self.name_column_var.set(name_guess)
-                self.invitees = df.dropna(subset=[email_guess, name_guess])
+                # Keep all rows, don't filter out missing data
+                self.invitees = df
+                total_invitees = len(df)
+                # Count how many have valid emails
+                valid_emails = 0
+                for idx, row in df.iterrows():
+                    email = str(row[email_guess]).strip() if pd.notna(row[email_guess]) else ""
+                    if self.is_valid_email(email):
+                        valid_emails += 1
+                
                 self.excel_path = file_path
-                self.status_label.configure(text=f"Loaded {len(self.invitees)} invitees.", text_color="green")
+                self.status_label.configure(
+                    text=f"Loaded {total_invitees} invitees ({valid_emails} with valid emails).", 
+                    text_color="green"
+                )
                 self.send_btn.configure(state="normal")
-                self.log(f"Loaded {len(self.invitees)} invitees from Excel.")
+                self.log(f"Loaded {total_invitees} invitees from Excel ({valid_emails} with valid emails).")
                 self.update_status_list()
             except Exception as e:
                 self.status_label.configure(text=f"Error: {e}", text_color="red")
@@ -356,6 +405,12 @@ class InvitationSenderApp(ctk.CTk):
     def clean_name(self, name):
         # Remove dots from middle initials and handle multiple spaces
         return ' '.join(part.replace('.', '') for part in name.split())
+
+    def is_valid_email(self, email):
+        """Check if email address is valid (basic validation)"""
+        if not email or email.lower() in ['nan', 'none', '']:
+            return False
+        return '@' in email and '.' in email and len(email) > 5
 
     def update_progress(self, current, total, message=""):
         """Update the progress bar and label"""
@@ -412,14 +467,17 @@ class InvitationSenderApp(ctk.CTk):
         skipped = 0
         selected_count = 0
         
-        # First, count selected invitees
+        # First, count selected invitees with valid emails
         for idx, row in self.invitees.iterrows():
-            name = self.clean_name(str(row[name_col]).strip())
-            recipient = str(row[email_col]).strip()
+            name_raw = row[name_col] if pd.notna(row[name_col]) else "Unknown"
+            name = self.clean_name(str(name_raw).strip())
+            email_raw = row[email_col] if pd.notna(row[email_col]) else ""
+            recipient = str(email_raw).strip()
             key = f"{recipient}|{name}"
             
             if key in self.selected_invitees and self.selected_invitees[key].get():
-                selected_count += 1
+                if self.is_valid_email(recipient):
+                    selected_count += 1
         
         if selected_count == 0:
             self.after(0, self.log, "No invitees selected for sending.")
@@ -430,12 +488,19 @@ class InvitationSenderApp(ctk.CTk):
         current_processed = 0
         
         for idx, row in self.invitees.iterrows():
-            name = self.clean_name(str(row[name_col]).strip())
-            recipient = str(row[email_col]).strip()
+            name_raw = row[name_col] if pd.notna(row[name_col]) else "Unknown"
+            name = self.clean_name(str(name_raw).strip())
+            email_raw = row[email_col] if pd.notna(row[email_col]) else ""
+            recipient = str(email_raw).strip()
             key = f"{recipient}|{name}"
             
             # Skip if not selected
             if key not in self.selected_invitees or not self.selected_invitees[key].get():
+                continue
+                
+            # Skip if email is not valid
+            if not self.is_valid_email(recipient):
+                self.after(0, self.log, f"[SKIPPED] Invalid email for {name}: {recipient}")
                 continue
                 
             current_processed += 1
