@@ -98,6 +98,9 @@ class InvitationGeneratorApp(ctk.CTk):
 		self.placeholders = []
 		self.excel_columns = []
 		self.mapping_vars = {}
+		
+		# Fast mode toggle
+		self.fast_mode = ctk.BooleanVar(value=False)
 
 		# Initialize generation tracking
 		self.tracking_file = "generated_invitations.json"
@@ -169,6 +172,26 @@ class InvitationGeneratorApp(ctk.CTk):
 		output_input_frame.pack(fill="x", padx=5, pady=(0, 5))
 		ctk.CTkEntry(output_input_frame, textvariable=self.output_folder, width=300, state="readonly").pack(side="left", padx=(0,5), fill="x", expand=True)
 		ctk.CTkButton(output_input_frame, text="Change", command=self.select_output_folder, width=80).pack(side="right")
+
+		# Fast mode toggle
+		fast_mode_frame = ctk.CTkFrame(left_column)
+		fast_mode_frame.pack(pady=5, fill="x", padx=10)
+		ctk.CTkLabel(fast_mode_frame, text="5. Processing Mode:", font=("Arial", 12, "bold")).pack(anchor="w", padx=5)
+		fast_toggle_frame = ctk.CTkFrame(fast_mode_frame, fg_color="transparent")
+		fast_toggle_frame.pack(fill="x", padx=5, pady=(0, 5))
+		self.fast_toggle = ctk.CTkCheckBox(
+			fast_toggle_frame, 
+			text="Fast Mode (Bulk Processing)", 
+			variable=self.fast_mode,
+			font=("Arial", 11)
+		)
+		self.fast_toggle.pack(side="left", padx=5)
+		ctk.CTkLabel(
+			fast_toggle_frame, 
+			text="⚡ Processes all files in batches for better performance", 
+			font=("Arial", 9), 
+			text_color="gray"
+		).pack(side="left", padx=(10, 0))
 
 		# Progress bar
 		progress_frame = ctk.CTkFrame(left_column)
@@ -659,7 +682,163 @@ class InvitationGeneratorApp(ctk.CTk):
 			return
 
 		self.log(f"Starting to generate {selected_count} selected invitations...")
+		
+		# Check if fast mode is enabled
+		if self.fast_mode.get():
+			self._generate_fast_mode(template_path, output_folder, mapping, selected_indices, selected_count)
+		else:
+			self._generate_normal_mode(template_path, output_folder, mapping, selected_indices, selected_count)
 
+	def _generate_fast_mode(self, template_path, output_folder, mapping, selected_indices, selected_count):
+		"""Fast mode: Process in bulk stages - DOCX, then PDF, then PNG"""
+		self.log("🚀 Fast mode enabled - Processing in bulk stages...")
+		
+		# Prepare output folder
+		os.makedirs(output_folder, exist_ok=True)
+		
+		# Ensure Poppler is available for pdf2image
+		poppler_path = None
+		if sys.platform == "win32":
+			poppler_path = ensure_poppler()
+		
+		generated_files = []
+		docx_files = []
+		pdf_files = []
+		
+		# STAGE 1: Generate all DOCX files
+		self.log("📄 Stage 1/3: Generating DOCX files...")
+		docx_generated = 0
+		
+		for i, idx in enumerate(selected_indices):
+			if not self.is_generating:
+				self.log("Generation cancelled.")
+				return
+				
+			row = self.invitees.iloc[idx]
+			data = row.to_dict()
+			data = {str(k): v for k, v in data.items()}
+			
+			attendee = Attendee(data)
+			context = attendee.get_context(mapping)
+			filename = attendee.get_filename()
+			
+			try:
+				doc = DocxTemplate(template_path)
+				doc.render(context)
+				out_docx = os.path.join(output_folder, f"Invitation - {filename}.docx")
+				doc.save(out_docx)
+				
+				docx_files.append(out_docx)
+				generated_files.append(filename)
+				docx_generated += 1
+				
+				# Update progress
+				progress = (i + 1) / (selected_count * 3)  # 3 stages total
+				self.after(0, self.progress.set, progress)
+				
+			except Exception as e:
+				self.log(f"Error creating DOCX for {filename}: {e}")
+		
+		self.log(f"✅ Stage 1 complete: {docx_generated}/{selected_count} DOCX files created")
+		
+		# STAGE 2: Convert all DOCX to PDF
+		if docx_files:
+			self.log("📑 Stage 2/3: Converting DOCX to PDF...")
+			pdf_converted = 0
+			
+			try:
+				# Use batch processing - much more efficient!
+				# docx2pdf can convert an entire directory at once
+				self.log("Using batch conversion for better performance...")
+				docx2pdf_convert(output_folder, output_folder)
+				
+				# Check which PDFs were actually created
+				for docx_path in docx_files:
+					pdf_path = docx_path.replace('.docx', '.pdf')
+					if os.path.exists(pdf_path):
+						pdf_files.append(pdf_path)
+						pdf_converted += 1
+				
+				# Update progress for the entire batch
+				progress = (selected_count * 2) / (selected_count * 3)
+				self.after(0, self.progress.set, progress)
+				
+			except Exception as e:
+				self.log(f"Batch PDF conversion failed, falling back to individual conversion: {e}")
+				
+				# Fallback to individual file conversion
+				for i, docx_path in enumerate(docx_files):
+					if not self.is_generating:
+						self.log("Generation cancelled.")
+						return
+						
+					try:
+						# Get the corresponding PDF path
+						pdf_path = docx_path.replace('.docx', '.pdf')
+						docx2pdf_convert(docx_path, output_folder)
+						
+						if os.path.exists(pdf_path):
+							pdf_files.append(pdf_path)
+							pdf_converted += 1
+						
+						# Update progress
+						progress = (selected_count + i + 1) / (selected_count * 3)
+						self.after(0, self.progress.set, progress)
+						
+					except Exception as e:
+						self.log(f"Error converting to PDF: {os.path.basename(docx_path)} - {e}")
+			
+			self.log(f"✅ Stage 2 complete: {pdf_converted}/{len(docx_files)} PDF files created")
+		
+		# STAGE 3: Convert all PDF to PNG
+		if pdf_files:
+			self.log("🖼️ Stage 3/3: Converting PDF to PNG...")
+			png_converted = 0
+			
+			for i, pdf_path in enumerate(pdf_files):
+				if not self.is_generating:
+					self.log("Generation cancelled.")
+					return
+					
+				try:
+					png_path = pdf_path.replace('.pdf', '.png')
+					images = convert_from_path(pdf_path, dpi=200, fmt='png', poppler_path=poppler_path)
+					
+					if images:
+						images[0].save(png_path, 'PNG')
+						png_converted += 1
+					
+					# Update progress
+					progress = (selected_count * 2 + i + 1) / (selected_count * 3)
+					self.after(0, self.progress.set, progress)
+					
+				except Exception as e:
+					self.log(f"Error converting to PNG: {os.path.basename(pdf_path)} - {e}")
+			
+			self.log(f"✅ Stage 3 complete: {png_converted}/{len(pdf_files)} PNG files created")
+		
+		# Mark all generated files and update UI
+		for filename in generated_files:
+			self.mark_invitation_generated(filename, output_folder)
+		
+		# Update invitee statuses
+		for idx in selected_indices:
+			row = self.invitees.iloc[idx]
+			data = row.to_dict()
+			data = {str(k): v for k, v in data.items()}
+			attendee = Attendee(data)
+			filename = attendee.get_filename()
+			key = f"{idx}|{filename}"
+			if key in self.invitee_labels:
+				self.after(0, self.update_invitee_status, key, True)
+		
+		self.log(f"🎉 Fast mode generation complete! Generated: {len(generated_files)} invitations")
+		self.after(0, self.update_invitees_list)
+
+	def _generate_normal_mode(self, template_path, output_folder, mapping, selected_indices, selected_count):
+		"""Normal mode: Process each invitation completely before moving to the next"""
+		self.log("🐌 Normal mode: Processing each invitation completely...")
+		
 		# Prepare output folder
 		os.makedirs(output_folder, exist_ok=True)
 
