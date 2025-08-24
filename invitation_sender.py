@@ -19,8 +19,8 @@ class InvitationSenderApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Invitation Sender")
-        self.geometry("500x650")  # Increased height to ensure all elements are visible
-        self.minsize(500, 650)    # Set minimum size to prevent elements from being hidden
+        self.geometry("900x700")  # Made wider for two-column layout
+        self.minsize(900, 700)    # Set minimum size to prevent elements from being hidden
         self.resizable(True, True) # Allow resizing for better usability
 
         self.excel_path = None
@@ -34,6 +34,9 @@ class InvitationSenderApp(ctk.CTk):
         # Initialize sent invitations tracking
         self.tracking_file = "sent_invitations.json"
         self.sent_invitations = self.load_sent_invitations()
+        
+        # Initialize selection tracking
+        self.selected_invitees = {}  # Dictionary to track checkbox states
         
         self.create_widgets()
         
@@ -72,14 +75,117 @@ class InvitationSenderApp(ctk.CTk):
         # Use a main frame to control layout and allow expansion
         main_frame = ctk.CTkFrame(self)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        main_frame.pack_propagate(False)
 
+        # Title at the top
         self.label = ctk.CTkLabel(main_frame, text="Send Email Invitations", font=("Arial", 22))
-        self.label.pack(pady=10)
+        self.label.pack(pady=(0, 10))
         
-        # Progress bar (hidden by default)
-        self.progress_frame = ctk.CTkFrame(main_frame)
-        self.progress_frame.pack(pady=5, fill="x", padx=20)
+        # Create two-column layout using a horizontal frame
+        columns_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        columns_frame.pack(fill="both", expand=True, pady=(0, 10))
+        
+        # Left column - Controls
+        left_column = ctk.CTkFrame(columns_frame)
+        left_column.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        
+        # Right column - Invitees list
+        right_column = ctk.CTkFrame(columns_frame)
+        right_column.pack(side="right", fill="both", expand=True, padx=(5, 0))
+
+        # === LEFT COLUMN CONTENT ===
+        
+        # Folder selection for invitation images
+        folder_frame = ctk.CTkFrame(left_column)
+        folder_frame.pack(pady=5, fill="x", padx=10)
+        ctk.CTkLabel(folder_frame, text="Images Folder:", font=("Arial", 12, "bold")).pack(anchor="w", padx=5)
+        folder_input_frame = ctk.CTkFrame(folder_frame, fg_color="transparent")
+        folder_input_frame.pack(fill="x", padx=5, pady=(0, 5))
+        self.folder_entry = ctk.CTkEntry(folder_input_frame, width=200)
+        self.folder_entry.pack(side="left", padx=(0,5), fill="x", expand=True)
+        self.folder_entry.insert(0, self.images_folder)
+        self.folder_entry.configure(state="readonly")
+        self.folder_btn = ctk.CTkButton(folder_input_frame, text="Browse", width=80, command=self.select_folder)
+        self.folder_btn.pack(side="right")
+
+        # Excel file section
+        excel_frame = ctk.CTkFrame(left_column)
+        excel_frame.pack(pady=5, fill="x", padx=10)
+        ctk.CTkLabel(excel_frame, text="Excel File:", font=("Arial", 12, "bold")).pack(anchor="w", padx=5)
+        self.open_btn = ctk.CTkButton(excel_frame, text="Open Excel File", command=self.open_excel)
+        self.open_btn.pack(pady=5)
+        self.status_label = ctk.CTkLabel(excel_frame, text="No file selected.", font=("Arial", 11))
+        self.status_label.pack(pady=(0, 5))
+
+        # Dropdowns for selecting email and name columns
+        columns_section = ctk.CTkFrame(left_column)
+        columns_section.pack(pady=5, fill="x", padx=10)
+        ctk.CTkLabel(columns_section, text="Column Mapping:", font=("Arial", 12, "bold")).pack(anchor="w", padx=5)
+        
+        email_col_frame = ctk.CTkFrame(columns_section, fg_color="transparent")
+        email_col_frame.pack(fill="x", padx=5, pady=2)
+        ctk.CTkLabel(email_col_frame, text="Email Column:", width=100).pack(side="left")
+        self.email_column_menu = ctk.CTkOptionMenu(email_col_frame, variable=self.email_column_var, values=[])
+        self.email_column_menu.pack(side="right", fill="x", expand=True)
+        
+        name_col_frame = ctk.CTkFrame(columns_section, fg_color="transparent")
+        name_col_frame.pack(fill="x", padx=5, pady=(2, 5))
+        ctk.CTkLabel(name_col_frame, text="Name Column:", width=100).pack(side="left")
+        self.name_column_menu = ctk.CTkOptionMenu(name_col_frame, variable=self.name_column_var, values=[])
+        self.name_column_menu.pack(side="right", fill="x", expand=True)
+
+        # Email credentials section
+        email_creds_frame = ctk.CTkFrame(left_column)
+        email_creds_frame.pack(pady=5, fill="x", padx=10)
+        ctk.CTkLabel(email_creds_frame, text="Email Credentials:", font=("Arial", 12, "bold")).pack(anchor="w", padx=5)
+        
+        self.email_label = ctk.CTkLabel(email_creds_frame, text="Sender Email:")
+        self.email_label.pack(pady=(5, 0), padx=5, anchor="w")
+        self.email_entry = ctk.CTkEntry(email_creds_frame, width=250)
+        self.email_entry.pack(padx=5, fill="x")
+
+        self.pass_label = ctk.CTkLabel(email_creds_frame, text="App Password:")
+        self.pass_label.pack(pady=(5, 0), padx=5, anchor="w")
+        self.pass_entry = ctk.CTkEntry(email_creds_frame, show="*", width=250)
+        self.pass_entry.pack(padx=5, pady=(0, 5), fill="x")
+
+        # Log area
+        log_frame = ctk.CTkFrame(left_column)
+        log_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        self.log_label = ctk.CTkLabel(log_frame, text="Log:", font=("Arial", 12, "bold"))
+        self.log_label.pack(pady=(5,0), anchor="w", padx=5)
+        self.log_textbox = ctk.CTkTextbox(log_frame, wrap="word")
+        self.log_textbox.pack(fill="both", expand=True, padx=5, pady=(0,5))
+        self.log_textbox.configure(state="disabled")
+
+        # === RIGHT COLUMN CONTENT ===
+        
+        # Invitees list with status
+        ctk.CTkLabel(right_column, text="Invitees Status", font=("Arial", 16, "bold")).pack(pady=(10, 5))
+        
+        # Header with refresh button
+        header_frame = ctk.CTkFrame(right_column)
+        header_frame.pack(fill="x", padx=10, pady=(0, 5))
+        self.refresh_btn = ctk.CTkButton(header_frame, text="Refresh", width=80, command=self.update_status_list)
+        self.refresh_btn.pack(side="right", padx=5)
+        
+        # Selection buttons frame
+        selection_frame = ctk.CTkFrame(right_column)
+        selection_frame.pack(fill="x", padx=10, pady=(0, 5))
+        self.select_all_btn = ctk.CTkButton(selection_frame, text="Select All", width=80, command=self.select_all_invitees)
+        self.select_all_btn.pack(side="left", padx=2)
+        self.select_none_btn = ctk.CTkButton(selection_frame, text="Select None", width=80, command=self.select_none_invitees)
+        self.select_none_btn.pack(side="left", padx=2)
+        self.select_unsent_btn = ctk.CTkButton(selection_frame, text="Select Unsent", width=90, command=self.select_unsent_invitees)
+        self.select_unsent_btn.pack(side="left", padx=2)
+        
+        # Scrollable frame for invitees - takes up most of the right column
+        self.scrollable_frame = ctk.CTkScrollableFrame(right_column)
+        self.scrollable_frame.pack(fill="both", expand=True, padx=10, pady=(0, 5))
+        self.status_labels = {}  # Store labels for updating
+
+        # Progress bar (hidden by default) - between list and send button
+        self.progress_frame = ctk.CTkFrame(right_column)
+        self.progress_frame.pack(pady=5, fill="x", padx=10)
         self.progress_frame.pack_forget()  # Hide initially
         
         self.progress_bar = ctk.CTkProgressBar(self.progress_frame)
@@ -89,86 +195,22 @@ class InvitationSenderApp(ctk.CTk):
         self.progress_label = ctk.CTkLabel(self.progress_frame, text="")
         self.progress_label.pack(pady=(0, 5))
 
-
-        # Folder selection for invitation images
-        folder_frame = ctk.CTkFrame(main_frame)
-        folder_frame.pack(pady=5, fill="x")
-        ctk.CTkLabel(folder_frame, text="Images Folder:").pack(side="left", padx=(0,5))
-        self.folder_entry = ctk.CTkEntry(folder_frame, width=260)
-        self.folder_entry.pack(side="left", padx=(0,5), fill="x", expand=True)
-        self.folder_entry.insert(0, self.images_folder)
-        self.folder_entry.configure(state="readonly")
-        self.folder_btn = ctk.CTkButton(folder_frame, text="Browse", width=80, command=self.select_folder)
-        self.folder_btn.pack(side="left")
-
-        self.open_btn = ctk.CTkButton(main_frame, text="Open Excel File", command=self.open_excel)
-        self.open_btn.pack(pady=5)
-    
-
-        self.status_label = ctk.CTkLabel(main_frame, text="No file selected.", font=("Arial", 14))
-        self.status_label.pack(pady=5)
-
-        # Dropdowns for selecting email and name columns
-        self.column_frame = ctk.CTkFrame(main_frame)
-        self.column_frame.pack(pady=5)
-        ctk.CTkLabel(self.column_frame, text="Email Column:").pack(side="left", padx=(0,5))
-        self.email_column_menu = ctk.CTkOptionMenu(self.column_frame, variable=self.email_column_var, values=[])
-        self.email_column_menu.pack(side="left", padx=(0,15))
-        ctk.CTkLabel(self.column_frame, text="Name Column:").pack(side="left", padx=(0,5))
-        self.name_column_menu = ctk.CTkOptionMenu(self.column_frame, variable=self.name_column_var, values=[])
-        self.name_column_menu.pack(side="left")
-
-        self.email_label = ctk.CTkLabel(main_frame, text="Sender Email:")
-        self.email_label.pack(pady=(10, 0))
-        self.email_entry = ctk.CTkEntry(main_frame, width=300)
-        self.email_entry.pack()
-
-        self.pass_label = ctk.CTkLabel(main_frame, text="App Password:")
-        self.pass_label.pack(pady=(5, 0))
-        self.pass_entry = ctk.CTkEntry(main_frame, show="*", width=300)
-        self.pass_entry.pack()
-
-        # Invitees list with status
-        status_frame = ctk.CTkFrame(main_frame)
-        status_frame.pack(fill="x", padx=2, pady=(10,5))
+        # Send button and result at bottom of right column
+        send_frame = ctk.CTkFrame(right_column)
+        send_frame.pack(fill="x", padx=10, pady=(0, 10))
         
-        # Header
-        header_frame = ctk.CTkFrame(status_frame)
-        header_frame.pack(fill="x", padx=5, pady=(5,0))
-        ctk.CTkLabel(header_frame, text="Invitees Status", font=("Arial", 14, "bold")).pack(side="left")
-        self.refresh_btn = ctk.CTkButton(header_frame, text="Refresh", width=80, command=self.update_status_list)
-        self.refresh_btn.pack(side="right", padx=5)
-        
-        # Scrollable frame for invitees
-        self.scrollable_frame = ctk.CTkScrollableFrame(status_frame, height=150)
-        self.scrollable_frame.pack(fill="x", padx=5, pady=5)
-        self.status_labels = {}  # Store labels for updating
-
-        # Log area (scrollable textbox)
-        self.log_label = ctk.CTkLabel(main_frame, text="Log:", font=("Arial", 12))
-        self.log_label.pack(pady=(10,0), anchor="w")
-        self.log_textbox = ctk.CTkTextbox(main_frame, height=100, width=450, wrap="word")
-        self.log_textbox.pack(fill="x", padx=2, pady=(0,5))
-        self.log_textbox.configure(state="disabled")
-
-        # Create a bottom container frame for the send button and result label
-        bottom_container = ctk.CTkFrame(main_frame, fg_color="transparent")
-        bottom_container.pack(side="bottom", fill="x", pady=(5,10))
-
-        # Create the send button with more prominence
         self.send_btn = ctk.CTkButton(
-            bottom_container, 
+            send_frame, 
             text="Send Invitations", 
             command=self.send_invitations, 
             state="disabled",
-            height=40,  # Make button taller
-            font=("Arial", 14)  # Larger font
+            height=40,
+            font=("Arial", 14)
         )
-        self.send_btn.pack(pady=5, fill="x", padx=20)  # Add padding on sides
+        self.send_btn.pack(pady=5, fill="x", padx=10)
 
-        # Result label below the send button
-        self.result_label = ctk.CTkLabel(bottom_container, text="", font=("Arial", 12))
-        self.result_label.pack(pady=5)
+        self.result_label = ctk.CTkLabel(send_frame, text="", font=("Arial", 12))
+        self.result_label.pack(pady=(0, 5))
 
     def select_folder(self):
         folder = fd.askdirectory(title="Select Invitation Images Folder")
@@ -186,14 +228,39 @@ class InvitationSenderApp(ctk.CTk):
         self.log_textbox.see("end")
         self.log_textbox.configure(state="disabled")
 
+    def select_all_invitees(self):
+        """Select all invitees for sending"""
+        for key in self.selected_invitees:
+            self.selected_invitees[key].set(True)
+        self.log("All invitees selected.")
+
+    def select_none_invitees(self):
+        """Deselect all invitees"""
+        for key in self.selected_invitees:
+            self.selected_invitees[key].set(False)
+        self.log("All invitees deselected.")
+
+    def select_unsent_invitees(self):
+        """Select only invitees who haven't been sent invitations yet"""
+        count = 0
+        for key, checkbox_var in self.selected_invitees.items():
+            email, name = key.split("|", 1)
+            if not self.was_invitation_sent(email, name):
+                checkbox_var.set(True)
+                count += 1
+            else:
+                checkbox_var.set(False)
+        self.log(f"Selected {count} unsent invitees.")
+
     def clear_status_list(self):
-        """Clear all status labels"""
+        """Clear all status labels and selection tracking"""
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
         self.status_labels = {}
+        self.selected_invitees = {}
 
     def update_status_list(self):
-        """Update the status list with current invitees"""
+        """Update the status list with current invitees and checkboxes"""
         self.clear_status_list()
         if not hasattr(self, 'invitees') or self.invitees is None:
             return
@@ -206,24 +273,35 @@ class InvitationSenderApp(ctk.CTk):
         for idx, row in self.invitees.iterrows():
             name = self.clean_name(str(row[name_col]).strip())
             email = str(row[email_col]).strip()
+            key = f"{email}|{name}"
             
             # Create frame for this invitee
             frame = ctk.CTkFrame(self.scrollable_frame)
             frame.pack(fill="x", padx=2, pady=1)
             
+            # Checkbox for selection
+            checkbox_var = ctk.BooleanVar()
+            checkbox = ctk.CTkCheckBox(frame, text="", variable=checkbox_var, width=20)
+            checkbox.pack(side="left", padx=5)
+            
+            # Store checkbox variable for later use
+            self.selected_invitees[key] = checkbox_var
+            
             # Name and email
             info_text = f"{name} ({email})"
-            ctk.CTkLabel(frame, text=info_text, anchor="w").pack(side="left", padx=5)
+            ctk.CTkLabel(frame, text=info_text, anchor="w").pack(side="left", padx=5, fill="x", expand=True)
             
             # Status label
-            status_label = ctk.CTkLabel(frame, text="", anchor="e")
+            status_label = ctk.CTkLabel(frame, text="", anchor="e", width=120)
             status_label.pack(side="right", padx=5)
             
             # Store label reference for updates
-            self.status_labels[f"{email}|{name}"] = status_label
+            self.status_labels[key] = status_label
             
-            # Update status
+            # Update status and default to select unsent invitees
+            is_sent = self.was_invitation_sent(email, name)
             self.update_invitee_status(email, name)
+            checkbox_var.set(not is_sent)  # Select unsent invitees by default
 
     def update_invitee_status(self, email, name):
         """Update the status display for a single invitee"""
@@ -336,14 +414,38 @@ class InvitationSenderApp(ctk.CTk):
         sent_count = 0
         failed = []
         skipped = 0
-        total = len(self.invitees)
+        selected_count = 0
+        
+        # First, count selected invitees
+        for idx, row in self.invitees.iterrows():
+            name = self.clean_name(str(row[name_col]).strip())
+            recipient = str(row[email_col]).strip()
+            key = f"{recipient}|{name}"
+            
+            if key in self.selected_invitees and self.selected_invitees[key].get():
+                selected_count += 1
+        
+        if selected_count == 0:
+            self.after(0, self.log, "No invitees selected for sending.")
+            self.after(0, self.finish_sending, 0, 0, [])
+            return
+        
+        self.after(0, self.log, f"Starting to send {selected_count} selected invitations...")
+        current_processed = 0
         
         for idx, row in self.invitees.iterrows():
             name = self.clean_name(str(row[name_col]).strip())
             recipient = str(row[email_col]).strip()
+            key = f"{recipient}|{name}"
+            
+            # Skip if not selected
+            if key not in self.selected_invitees or not self.selected_invitees[key].get():
+                continue
+                
+            current_processed += 1
             
             # Update progress in the main thread
-            self.after(0, self.update_progress, idx + 1, total, f"Processing: {name} ({recipient})")
+            self.after(0, self.update_progress, current_processed, selected_count, f"Processing: {name} ({recipient})")
             
             # Check if invitation was already sent
             if self.was_invitation_sent(recipient, name):
@@ -401,7 +503,7 @@ class InvitationSenderApp(ctk.CTk):
             return
 
         # Show progress bar and disable send button
-        self.progress_frame.pack(after=self.label)
+        self.progress_frame.pack(pady=5, fill="x", padx=10)
         self.send_btn.configure(state="disabled")
         self.log(f"Starting to send invitations from {sender_email}...")
         
