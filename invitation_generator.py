@@ -105,6 +105,11 @@ class InvitationGeneratorApp(ctk.CTk):
 		
 		# Cancel flag for generation process
 		self.is_generating = False
+		
+		# Pagination for large datasets
+		self.items_per_page = 25
+		self.current_page = 0
+		self.total_pages = 0
 
 		# Initialize selection tracking for invitees
 		self.selected_invitees = {}  # Dictionary to track checkbox states
@@ -185,9 +190,20 @@ class InvitationGeneratorApp(ctk.CTk):
 		# Invitees list with status
 		ctk.CTkLabel(right_column, text="Invitees Selection", font=("Arial", 16, "bold")).pack(pady=(10, 5))
 		
-		# Header with refresh button
+		# Header with refresh and pagination buttons
 		header_frame = ctk.CTkFrame(right_column)
 		header_frame.pack(fill="x", padx=10, pady=(0, 5))
+		
+		# Pagination controls
+		self.prev_page_btn = ctk.CTkButton(header_frame, text="← Prev", width=80, command=self.prev_page, state="disabled")
+		self.prev_page_btn.pack(side="left", padx=5)
+		
+		self.page_label = ctk.CTkLabel(header_frame, text="Page 1 of 1")
+		self.page_label.pack(side="left", padx=10)
+		
+		self.next_page_btn = ctk.CTkButton(header_frame, text="Next →", width=80, command=self.next_page, state="disabled")
+		self.next_page_btn.pack(side="left", padx=5)
+		
 		self.refresh_btn = ctk.CTkButton(header_frame, text="Refresh", width=80, command=self.update_invitees_list)
 		self.refresh_btn.pack(side="right", padx=5)
 		
@@ -218,6 +234,40 @@ class InvitationGeneratorApp(ctk.CTk):
 			font=("Arial", 14)
 		)
 		self.generate_btn.pack(pady=5, fill="x", padx=10)
+
+	def prev_page(self):
+		"""Go to previous page"""
+		if self.current_page > 0:
+			self.current_page -= 1
+			self.update_invitees_list()
+
+	def next_page(self):
+		"""Go to next page"""
+		if self.current_page < self.total_pages - 1:
+			self.current_page += 1
+			self.update_invitees_list()
+
+	def update_pagination_controls(self):
+		"""Update pagination button states and labels"""
+		if self.invitees is None or self.invitees.empty:
+			self.total_pages = 0
+			self.current_page = 0
+		else:
+			self.total_pages = (len(self.invitees) + self.items_per_page - 1) // self.items_per_page
+			if self.current_page >= self.total_pages:
+				self.current_page = max(0, self.total_pages - 1)
+		
+		# Update buttons
+		self.prev_page_btn.configure(state="normal" if self.current_page > 0 else "disabled")
+		self.next_page_btn.configure(state="normal" if self.current_page < self.total_pages - 1 else "disabled")
+		
+		# Update label
+		if self.total_pages > 0:
+			start_item = self.current_page * self.items_per_page + 1
+			end_item = min((self.current_page + 1) * self.items_per_page, len(self.invitees))
+			self.page_label.configure(text=f"Items {start_item}-{end_item} of {len(self.invitees)} (Page {self.current_page + 1} of {self.total_pages})")
+		else:
+			self.page_label.configure(text="No items")
 
 	def select_template(self):
 		path = filedialog.askopenfilename(filetypes=[("Word Documents", "*.docx")])
@@ -266,6 +316,9 @@ class InvitationGeneratorApp(ctk.CTk):
 			self.log(f"Selected Excel: {path}")
 			self.excel_columns = self.extract_excel_columns(path)
 			self.load_invitees(path)
+			# Reset selections when loading new file
+			self.reset_all_selections()
+			self.current_page = 0  # Reset to first page
 			self.update_mapping_dropdowns()
 			self.update_invitees_list()
 
@@ -309,12 +362,26 @@ class InvitationGeneratorApp(ctk.CTk):
 			self.log(f"Output folder set to: {path}")
 
 	def update_invitees_list(self):
-		"""Update the invitees list with checkboxes"""
+		"""Update the invitees list with checkboxes - optimized with pagination"""
 		self.clear_invitees_list()
+		
 		if self.invitees is None or self.invitees.empty:
+			self.update_pagination_controls()
 			return
 
-		for idx, row in self.invitees.iterrows():
+		# Update pagination controls
+		self.update_pagination_controls()
+		
+		# Calculate which items to show
+		start_idx = self.current_page * self.items_per_page
+		end_idx = min(start_idx + self.items_per_page, len(self.invitees))
+		
+		# Only create widgets for visible items
+		visible_invitees = self.invitees.iloc[start_idx:end_idx]
+		
+		# Batch process attendee data first (faster than creating UI widgets)
+		attendee_data = []
+		for idx, row in visible_invitees.iterrows():
 			# Convert row to dict format that Attendee expects
 			data = row.to_dict()
 			data = {str(k): v for k, v in data.items()}
@@ -340,73 +407,156 @@ class InvitationGeneratorApp(ctk.CTk):
 				if not display_name:
 					display_name = f"Row {idx + 1}"
 			
-			# Use the processed filename for the key (consistent with tracking)
-			key = f"{idx}|{filename}"
-			
-			# Create frame for this invitee
-			frame = ctk.CTkFrame(self.invitees_scrollable_frame)
-			frame.pack(fill="x", padx=2, pady=1)
-			
-			# Checkbox for selection
-			checkbox_var = ctk.BooleanVar()
-			checkbox = ctk.CTkCheckBox(frame, text="", variable=checkbox_var, width=20)
-			checkbox.pack(side="left", padx=5)
-			
-			# Store checkbox variable for later use
-			self.selected_invitees[key] = checkbox_var
-			
-			# Name display (show the original display name)
-			info_label = ctk.CTkLabel(frame, text=display_name, anchor="w")
-			info_label.pack(side="left", padx=5, fill="x", expand=True)
-			
-			# Status label
-			status_label = ctk.CTkLabel(frame, text="", anchor="e", width=120)
-			status_label.pack(side="right", padx=5)
-			
-			# Store label reference for updates
-			self.invitee_labels[key] = status_label
-			
-			# Update status using the processed filename (consistent with tracking)
+			# Check generation status
 			is_generated = self.was_invitation_generated(filename)
+			
+			attendee_data.append({
+				'idx': idx,
+				'display_name': display_name,
+				'filename': filename,
+				'is_generated': is_generated
+			})
+		
+		# Now create UI elements in batch
+		for data in attendee_data:
+			self._create_invitee_widget(data)
+
+	def _create_invitee_widget(self, data):
+		"""Create UI widget for a single invitee"""
+		idx = data['idx']
+		display_name = data['display_name'] 
+		filename = data['filename']
+		is_generated = data['is_generated']
+		
+		# Use the processed filename for the key (consistent with tracking)
+		key = f"{idx}|{filename}"
+		
+		# Create frame for this invitee
+		frame = ctk.CTkFrame(self.invitees_scrollable_frame)
+		frame.pack(fill="x", padx=2, pady=1)
+		
+		# Checkbox for selection
+		checkbox_var = ctk.BooleanVar()
+		checkbox = ctk.CTkCheckBox(frame, text="", variable=checkbox_var, width=20)
+		checkbox.pack(side="left", padx=5)
+		
+		# Store or restore checkbox variable
+		if key in self.selected_invitees:
+			# Restore previous selection state
+			previous_state = self.selected_invitees[key].get()
+			checkbox_var.set(previous_state)
+		else:
+			# Set default selection based on generation status
 			if is_generated:
-				status_label.configure(text="Generated", text_color="green")
 				checkbox_var.set(False)  # Don't select already generated
 			else:
-				status_label.configure(text="Not generated", text_color="gray")
 				checkbox_var.set(True)  # Select ungenerated by default
+		
+		# Update/store checkbox variable for later use
+		self.selected_invitees[key] = checkbox_var
+		
+		# Name display (show the original display name)
+		info_label = ctk.CTkLabel(frame, text=display_name, anchor="w")
+		info_label.pack(side="left", padx=5, fill="x", expand=True)
+		
+		# Status label
+		status_label = ctk.CTkLabel(frame, text="", anchor="e", width=120)
+		status_label.pack(side="right", padx=5)
+		
+		# Store label reference for updates
+		self.invitee_labels[key] = status_label
+		
+		# Update status
+		if is_generated:
+			status_label.configure(text="Generated ✓", text_color="green")
+		else:
+			status_label.configure(text="Not generated", text_color="gray")
 
 	def clear_invitees_list(self):
-		"""Clear all invitee widgets and selection tracking"""
+		"""Clear all invitee widgets but preserve selection state"""
 		for widget in self.invitees_scrollable_frame.winfo_children():
 			widget.destroy()
 		self.invitee_labels = {}
+		# DON'T clear selected_invitees - preserve selections across pages
+
+	def reset_all_selections(self):
+		"""Completely reset all selections (used when loading new Excel file)"""
 		self.selected_invitees = {}
 
 	def select_all_invitees(self):
-		"""Select all invitees for generation"""
+		"""Select all invitees for generation (across all pages)"""
+		if self.invitees is None or self.invitees.empty:
+			return
+			
 		count = 0
-		for key, checkbox_var in self.selected_invitees.items():
-			checkbox_var.set(True)
+		# Work with all invitees, not just visible ones
+		for idx, row in self.invitees.iterrows():
+			data = row.to_dict()
+			data = {str(k): v for k, v in data.items()}
+			attendee = Attendee(data)
+			filename = attendee.get_filename()
+			key = f"{idx}|{filename}"
+			
+			# Create checkbox variable if it doesn't exist
+			if key not in self.selected_invitees:
+				self.selected_invitees[key] = ctk.BooleanVar()
+			
+			self.selected_invitees[key].set(True)
 			count += 1
-		self.log(f"Selected all {count} invitees.")
+			
+		self.log(f"Selected all {count} invitees (across all pages).")
 
 	def select_none_invitees(self):
-		"""Deselect all invitees"""
-		for key in self.selected_invitees:
+		"""Deselect all invitees (across all pages)"""
+		if self.invitees is None or self.invitees.empty:
+			return
+			
+		count = 0
+		# Work with all invitees, not just visible ones  
+		for idx, row in self.invitees.iterrows():
+			data = row.to_dict()
+			data = {str(k): v for k, v in data.items()}
+			attendee = Attendee(data)
+			filename = attendee.get_filename()
+			key = f"{idx}|{filename}"
+			
+			# Create checkbox variable if it doesn't exist
+			if key not in self.selected_invitees:
+				self.selected_invitees[key] = ctk.BooleanVar()
+				
 			self.selected_invitees[key].set(False)
-		self.log("All invitees deselected.")
+			count += 1
+			
+		self.log(f"Deselected all {count} invitees.")
 
 	def select_ungenerated_invitees(self):
-		"""Select only invitees who haven't been generated yet"""
-		count = 0
-		for key, checkbox_var in self.selected_invitees.items():
-			_, filename = key.split("|", 1)  # Now using processed filename
+		"""Select only invitees who haven't been generated yet (across all pages)"""
+		if self.invitees is None or self.invitees.empty:
+			return
+			
+		selected_count = 0
+		total_count = 0
+		
+		# Work with all invitees, not just visible ones
+		for idx, row in self.invitees.iterrows():
+			data = row.to_dict()
+			data = {str(k): v for k, v in data.items()}
+			attendee = Attendee(data)
+			filename = attendee.get_filename()
+			key = f"{idx}|{filename}"
+			
+			# Create checkbox variable if it doesn't exist
+			if key not in self.selected_invitees:
+				self.selected_invitees[key] = ctk.BooleanVar()
+			
+			total_count += 1
 			if not self.was_invitation_generated(filename):
-				checkbox_var.set(True)
-				count += 1
+				self.selected_invitees[key].set(True)
+				selected_count += 1
 			else:
-				checkbox_var.set(False)
-		self.log(f"Selected {count} ungenerated invitees.")
+				self.selected_invitees[key].set(False)
+				
+		self.log(f"Selected {selected_count} ungenerated invitees out of {total_count} total.")
 
 	def log(self, message):
 		# Schedule the log update on the main thread
@@ -574,7 +724,7 @@ class InvitationGeneratorApp(ctk.CTk):
 				self.mark_invitation_generated(filename, output_folder)
 				generated_count += 1
 				
-				# Update the status in the list
+				# Store status update for later batch processing
 				key = f"{idx}|{filename}"
 				if key in self.invitee_labels:
 					self.after(0, self.update_invitee_status, key, True)
@@ -582,12 +732,15 @@ class InvitationGeneratorApp(ctk.CTk):
 			except Exception as e:
 				self.log(f"Error for {filename}: {e}")
 			
-			# Update progress on main thread
-			self.after(0, self.progress.set, current_processed / selected_count)
+			# Update progress and log every 10 items to reduce UI updates
+			if current_processed % 10 == 0 or current_processed == selected_count:
+				self.after(0, self.progress.set, current_processed / selected_count)
+				if current_processed % 10 == 0:
+					self.log(f"Progress: {current_processed}/{selected_count} processed")
 
 		self.log(f"Generation complete. Generated: {generated_count} invitations")
 		
-		# Refresh the invitees list to show updated statuses
+		# Only refresh the current page to show updated statuses
 		self.after(0, self.update_invitees_list)
 
 	def update_invitee_status(self, key, is_generated):
