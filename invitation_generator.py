@@ -5,6 +5,7 @@ import os
 import urllib.request
 import zipfile
 import re
+import threading
 
 # Third-party imports
 from pdf2image import convert_from_path
@@ -218,12 +219,21 @@ class InvitationGeneratorApp(ctk.CTk):
 			self.log(f"Output folder set to: {path}")
 
 	def log(self, message):
+		# Schedule the log update on the main thread
+		self.after(0, self._log_update, message)
+	
+	def _log_update(self, message):
 		self.log_text.configure(state="normal")
 		self.log_text.insert("end", message + "\n")
 		self.log_text.see("end")
 		self.log_text.configure(state="disabled")
 
 	def generate_invitations(self):
+		# Start generation in a separate thread to keep UI responsive
+		thread = threading.Thread(target=self._generate_invitations_thread, daemon=True)
+		thread.start()
+
+	def _generate_invitations_thread(self):
 		self.log("Generation started...")
 		template_path = self.template_path.get()
 		excel_path = self.excel_path.get()
@@ -288,8 +298,8 @@ class InvitationGeneratorApp(ctk.CTk):
 						self.log(f"PNG conversion failed: {e}")
 			except Exception as e:
 				self.log(f"Error for row {idx}: {e}")
-			self.progress.set(idx / total)
-			self.update_idletasks()
+			# Update progress on main thread
+			self.after(0, self.progress.set, idx / total)
 
 		self.log("Generation complete.")
 
