@@ -26,8 +26,8 @@ class Attendee:
 		context = {}
 		for ph, col in mapping.items():
 			value = self.data.get(col, "")
-			# Convert None to empty string and strip whitespace
-			if value is None or str(value).strip() == "":
+			# Convert None, NaN, or empty string to empty string and strip whitespace
+			if value is None or pd.isna(value) or str(value).strip() == "" or str(value).strip().lower() == "nan":
 				context[ph] = ""
 			else:
 				context[ph] = str(value).strip()
