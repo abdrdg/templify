@@ -39,8 +39,11 @@ class InvitationSenderApp(ctk.CTk):
         self.selected_invitees = {}  # Dictionary to track checkbox states
         self.valid_email_invitees = {}  # Dictionary to track which invitees have valid emails
         
+        # Cancel flag for sending process
+        self.is_sending = False
+        
         # Pagination for large datasets
-        self.items_per_page = 25
+        self.items_per_page = 100
         self.current_page = 0
         self.total_pages = 0
         
@@ -726,6 +729,11 @@ class InvitationSenderApp(ctk.CTk):
         current_processed = 0
         
         for idx, row in self.invitees.iterrows():
+            # Check for cancellation
+            if not self.is_sending:
+                self.after(0, self.log, "Sending cancelled.")
+                return
+                
             name_raw = row[name_col] if pd.notna(row[name_col]) else "Unknown"
             name = self.clean_name(str(name_raw).strip())
             email_raw = row[email_col] if pd.notna(row[email_col]) else ""
@@ -785,11 +793,16 @@ class InvitationSenderApp(ctk.CTk):
         self.result_label.configure(text=result_msg, text_color="green" if sent_count else "red")
         self.log(result_msg)
         
-        # Re-enable the send button and hide progress
-        self.send_btn.configure(state="normal")
-        self.progress_frame.pack_forget()
+        # Status refresh happens automatically via the wrapper's finally block
 
     def send_invitations(self):
+        if self.is_sending:
+            # Cancel sending
+            self.is_sending = False
+            self.log("Sending cancelled by user.")
+            self.reset_send_button()
+            return
+            
         sender_email = self.email_entry.get().strip()
         sender_pass = self.pass_entry.get().strip()
         email_col = self.email_column_var.get()
@@ -804,17 +817,33 @@ class InvitationSenderApp(ctk.CTk):
             self.log("Email or name column not selected.")
             return
 
-        # Show progress bar and disable send button
+        # Start sending process
+        self.is_sending = True
+        self.send_btn.configure(text="Cancel", fg_color="red")
+        
+        # Show progress bar
         self.progress_frame.pack(pady=5, fill="x", padx=10)
-        self.send_btn.configure(state="disabled")
         self.log(f"Starting to send invitations from {sender_email}...")
         
         # Start sending thread
         threading.Thread(
-            target=self.send_invitations_thread,
+            target=self._send_invitations_thread,
             args=(sender_email, sender_pass, email_col, name_col),
             daemon=True
         ).start()
+
+    def reset_send_button(self):
+        """Reset the send button to its original state"""
+        self.is_sending = False
+        self.send_btn.configure(text="Send Invitations", fg_color=["#1f538d", "#14375e"])
+        self.progress_frame.pack_forget()  # Hide progress bar
+
+    def _send_invitations_thread(self, sender_email, sender_pass, email_col, name_col):
+        try:
+            self.send_invitations_thread(sender_email, sender_pass, email_col, name_col)
+        finally:
+            # Always reset the button when sending ends
+            self.after(0, self.reset_send_button)
 
 if __name__ == "__main__":
     app = InvitationSenderApp()
