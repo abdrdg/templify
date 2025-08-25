@@ -590,8 +590,59 @@ class InvitationSenderApp(ctk.CTk):
             self.log("No file selected.")
 
     def clean_name(self, name):
-        # Remove dots from middle initials and handle multiple spaces
-        return ' '.join(part.replace('.', '') for part in name.split())
+        # Remove dots from middle initials, handle quotes and newlines, normalize spaces
+        return ' '.join(part.replace('.', '').replace('"', "'") for part in str(name).replace('\n', ' ').split())
+
+    def find_invitation_image(self, name):
+        """Find invitation image file, trying different filename variations for backward compatibility"""
+        # Try the current cleaned filename first
+        cleaned_name = self.clean_name(name)
+        primary_filename = os.path.join(self.images_folder, f"Invitation - {cleaned_name}.png")
+        
+        if os.path.exists(primary_filename):
+            return primary_filename
+        
+        # Try various legacy processing variations for backward compatibility
+        variations = [
+            # Legacy processing (old get_filename logic)
+            str(name).replace("\n", " ").replace(".", "").replace('"', "'").strip(),
+            # Raw name with just quote replacement
+            str(name).replace('"', "'"),
+            # Raw name with no processing
+            str(name),
+            # Name with just space normalization (but keeping leading/trailing)
+            str(name).replace("\n", " ").replace(".", "").replace('"', "'"),
+        ]
+        
+        for variation in variations:
+            # Try exact variation
+            filename = os.path.join(self.images_folder, f"Invitation - {variation}.png")
+            if os.path.exists(filename):
+                return filename
+                
+            # Also try with potential extra space after dash (leading space in name)
+            filename_extra_space = os.path.join(self.images_folder, f"Invitation -  {variation}.png")
+            if os.path.exists(filename_extra_space):
+                return filename_extra_space
+        
+        # Try to find any file that starts with "Invitation - " and contains parts of the name
+        # This is a fuzzy matching approach for difficult cases
+        if os.path.exists(self.images_folder):
+            name_parts = cleaned_name.lower().split()
+            if name_parts:
+                try:
+                    for filename in os.listdir(self.images_folder):
+                        if filename.startswith("Invitation - ") and filename.endswith(".png"):
+                            file_name_part = filename[13:-4].lower()  # Remove "Invitation - " and ".png"
+                            # Check if all name parts are present in the filename
+                            if all(part in file_name_part for part in name_parts):
+                                full_path = os.path.join(self.images_folder, filename)
+                                return full_path
+                except OSError:
+                    pass  # Handle permission errors gracefully
+        
+        # None found
+        return None
 
     def is_valid_email(self, email):
         """Check if email address is valid (basic validation)"""
@@ -701,10 +752,13 @@ class InvitationSenderApp(ctk.CTk):
                 skipped += 1
                 continue
                 
-            img_filename = os.path.join(self.images_folder, f"Invitation - {name}.png")
-            if not os.path.exists(img_filename):
+            img_filename = self.find_invitation_image(name)
+            if img_filename is None:
+                # Try to provide helpful info about what files we looked for
+                cleaned_name = self.clean_name(name)
+                expected_filename = f"Invitation - {cleaned_name}.png"
                 failed.append((recipient, "Invitation image not found"))
-                self.after(0, self.log, f"[{recipient}] Invitation image not found: {img_filename}")
+                self.after(0, self.log, f"[{recipient}] Invitation image not found. Expected: {expected_filename}")
                 continue
 
             success, error = self.send_single_invitation(sender_email, sender_pass, name, recipient, img_filename)

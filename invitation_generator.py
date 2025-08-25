@@ -36,7 +36,9 @@ class Attendee:
 	def get_filename(self):
 		# Use Name or fallback to first column
 		name = self.data.get("Name") or list(self.data.values())[0]
-		return str(name).replace("\n", " ").replace(".", "").replace('"', "'")
+		# Clean the name the same way as invitation sender
+		cleaned_name = ' '.join(part.replace('.', '').replace('"', "'") for part in str(name).split())
+		return cleaned_name
 
 
 # Modern GUI for invitation generation
@@ -613,6 +615,79 @@ class InvitationGeneratorApp(ctk.CTk):
 	def was_invitation_generated(self, name):
 		"""Check if invitation was already generated for this person"""
 		return name in self.generated_invitations
+
+	def find_existing_invitation_files(self, name):
+		"""Find existing invitation files, trying different filename variations for backward compatibility"""
+		output_folder = self.output_folder.get()
+		if not output_folder or not os.path.exists(output_folder):
+			return None
+			
+		# Try the current cleaned filename first
+		cleaned_name = self.get_filename_from_name(name)
+		primary_files = {
+			'docx': os.path.join(output_folder, f"Invitation - {cleaned_name}.docx"),
+			'pdf': os.path.join(output_folder, f"Invitation - {cleaned_name}.pdf"),
+			'png': os.path.join(output_folder, f"Invitation - {cleaned_name}.png")
+		}
+		
+		if os.path.exists(primary_files['docx']):
+			return primary_files
+		
+		# Try various legacy processing variations for backward compatibility
+		variations = [
+			# Legacy processing (old get_filename logic)
+			str(name).replace("\n", " ").replace(".", "").replace('"', "'").strip(),
+			# Raw name with just quote replacement
+			str(name).replace('"', "'"),
+			# Raw name with no processing
+			str(name),
+			# Name with just space normalization (but keeping leading/trailing)
+			str(name).replace("\n", " ").replace(".", "").replace('"', "'"),
+		]
+		
+		for variation in variations:
+			# Try exact variation
+			files = {
+				'docx': os.path.join(output_folder, f"Invitation - {variation}.docx"),
+				'pdf': os.path.join(output_folder, f"Invitation - {variation}.pdf"),
+				'png': os.path.join(output_folder, f"Invitation - {variation}.png")
+			}
+			if os.path.exists(files['docx']):
+				return files
+				
+			# Also try with potential extra space after dash (leading space in name)
+			files_extra_space = {
+				'docx': os.path.join(output_folder, f"Invitation -  {variation}.docx"),
+				'pdf': os.path.join(output_folder, f"Invitation -  {variation}.pdf"),
+				'png': os.path.join(output_folder, f"Invitation -  {variation}.png")
+			}
+			if os.path.exists(files_extra_space['docx']):
+				return files_extra_space
+		
+		# Try fuzzy matching as last resort
+		name_parts = cleaned_name.lower().split()
+		if name_parts and os.path.exists(output_folder):
+			try:
+				for filename in os.listdir(output_folder):
+					if filename.startswith("Invitation - ") and filename.endswith(".docx"):
+						file_name_part = filename[13:-5].lower()  # Remove "Invitation - " and ".docx"
+						# Check if all name parts are present in the filename
+						if all(part in file_name_part for part in name_parts):
+							base_path = os.path.join(output_folder, filename[:-5])  # Remove .docx
+							fuzzy_files = {
+								'docx': base_path + '.docx',
+								'pdf': base_path + '.pdf',
+								'png': base_path + '.png'
+							}
+							return fuzzy_files
+			except OSError:
+				pass  # Handle permission errors gracefully
+		
+		return None
+
+	def get_filename_from_name(self, name):
+		"""Get filename from name using the same logic as Attendee.get_filename()"""
+		return ' '.join(part.replace('.', '').replace('"', "'") for part in str(name).replace('\n', ' ').split())
 
 	def mark_invitation_generated(self, name, output_folder):
 		"""Mark invitation as generated for this person"""
