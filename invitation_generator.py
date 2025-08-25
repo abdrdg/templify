@@ -36,8 +36,14 @@ class Attendee:
 	def get_filename(self):
 		# Use Name or fallback to first column
 		name = self.data.get("Name") or list(self.data.values())[0]
-		# Clean the name the same way as invitation sender
-		cleaned_name = ' '.join(part.replace('.', '').replace('"', "'") for part in str(name).split())
+		# Clean the name and remove invalid filename characters
+		cleaned_name = str(name).replace('\n', ' ')
+		# Replace invalid Windows filename characters
+		invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+		for char in invalid_chars:
+			cleaned_name = cleaned_name.replace(char, ' ')
+		# Remove dots and normalize spaces
+		cleaned_name = ' '.join(part.replace('.', '') for part in cleaned_name.split())
 		return cleaned_name
 
 
@@ -643,6 +649,8 @@ class InvitationGeneratorApp(ctk.CTk):
 			str(name),
 			# Name with just space normalization (but keeping leading/trailing)
 			str(name).replace("\n", " ").replace(".", "").replace('"', "'"),
+			# Legacy with slash replacement (in case files were created with slash handling)
+			str(name).replace("\n", " ").replace(".", "").replace('"', "'").replace("/", " ").replace("\\", " ").strip(),
 		]
 		
 		for variation in variations:
@@ -687,7 +695,13 @@ class InvitationGeneratorApp(ctk.CTk):
 
 	def get_filename_from_name(self, name):
 		"""Get filename from name using the same logic as Attendee.get_filename()"""
-		return ' '.join(part.replace('.', '').replace('"', "'") for part in str(name).replace('\n', ' ').split())
+		cleaned_name = str(name).replace('\n', ' ')
+		# Replace invalid Windows filename characters
+		invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+		for char in invalid_chars:
+			cleaned_name = cleaned_name.replace(char, ' ')
+		# Remove dots and normalize spaces
+		return ' '.join(part.replace('.', '') for part in cleaned_name.split())
 
 	def mark_invitation_generated(self, name, output_folder):
 		"""Mark invitation as generated for this person"""

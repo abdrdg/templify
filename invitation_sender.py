@@ -593,8 +593,14 @@ class InvitationSenderApp(ctk.CTk):
             self.log("No file selected.")
 
     def clean_name(self, name):
-        # Remove dots from middle initials, handle quotes and newlines, normalize spaces
-        return ' '.join(part.replace('.', '').replace('"', "'") for part in str(name).replace('\n', ' ').split())
+        # Clean the name and remove invalid filename characters
+        cleaned_name = str(name).replace('\n', ' ')
+        # Replace invalid Windows filename characters
+        invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+        for char in invalid_chars:
+            cleaned_name = cleaned_name.replace(char, ' ')
+        # Remove dots and normalize spaces
+        return ' '.join(part.replace('.', '') for part in cleaned_name.split())
 
     def find_invitation_image(self, name):
         """Find invitation image file, trying different filename variations for backward compatibility"""
@@ -615,6 +621,8 @@ class InvitationSenderApp(ctk.CTk):
             str(name),
             # Name with just space normalization (but keeping leading/trailing)
             str(name).replace("\n", " ").replace(".", "").replace('"', "'"),
+            # Legacy with slash replacement (in case files were created with slash handling)
+            str(name).replace("\n", " ").replace(".", "").replace('"', "'").replace("/", " ").replace("\\", " ").strip(),
         ]
         
         for variation in variations:
