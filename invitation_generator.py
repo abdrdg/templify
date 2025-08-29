@@ -61,32 +61,60 @@ def ensure_poppler():
 	Returns the bin path containing pdftoppm.exe for pdf2image.
 	"""
 	if sys.platform != "win32":
+		print("Non-Windows system detected, assuming Poppler is system-installed")
 		return None
+		
+	print("Checking for Poppler installation...")
+	
 	# Explicitly check the expected path
 	poppler_bin = os.path.join(os.path.dirname(__file__), "poppler", "poppler-23.11.0", "Library", "bin")
 	pdftoppm_path = os.path.join(poppler_bin, "pdftoppm.exe")
+	
 	if os.path.exists(pdftoppm_path):
+		print(f"Poppler found at: {poppler_bin}")
 		return poppler_bin
+		
 	# Fallback: search all subfolders for pdftoppm.exe
 	poppler_dir = os.path.join(os.path.dirname(__file__), "poppler")
+	print(f"Searching for Poppler in: {poppler_dir}")
+	
 	for root, dirs, files in os.walk(poppler_dir):
 		if "pdftoppm.exe" in files:
+			print(f"Found existing Poppler at: {root}")
 			return root
+			
 	# Download and extract Poppler if not found
-	url = "https://github.com/oschwartz10612/poppler-windows/releases/download/v23.11.0-0/Release-23.11.0-0.zip"
-	zip_path = os.path.join(poppler_dir, "poppler.zip")
-	os.makedirs(poppler_dir, exist_ok=True)
-	print("Downloading Poppler...")
-	urllib.request.urlretrieve(url, zip_path)
-	print("Extracting Poppler...")
-	with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-		zip_ref.extractall(poppler_dir)
-	os.remove(zip_path)
-	# Find the extracted folder
-	for root, dirs, files in os.walk(poppler_dir):
-		if "pdftoppm.exe" in files:
-			return root
-	return None
+	print("Poppler not found, attempting download...")
+	
+	try:
+		url = "https://github.com/oschwartz10612/poppler-windows/releases/download/v23.11.0-0/Release-23.11.0-0.zip"
+		zip_path = os.path.join(poppler_dir, "poppler.zip")
+		os.makedirs(poppler_dir, exist_ok=True)
+		
+		print("Downloading Poppler from GitHub...")
+		urllib.request.urlretrieve(url, zip_path)
+		
+		print("Extracting Poppler...")
+		with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+			zip_ref.extractall(poppler_dir)
+		os.remove(zip_path)
+		
+		# Find the extracted folder
+		for root, dirs, files in os.walk(poppler_dir):
+			if "pdftoppm.exe" in files:
+				print(f"Poppler successfully installed at: {root}")
+				return root
+				
+		print("ERROR: Poppler download completed but pdftoppm.exe not found")
+		return None
+		
+	except Exception as e:
+		print(f"ERROR: Failed to download/extract Poppler: {e}")
+		print("Manual installation required:")
+		print("1. Download Poppler from: https://github.com/oschwartz10612/poppler-windows/releases")
+		print("2. Extract to a 'poppler' folder next to this script")
+		print("3. Ensure pdftoppm.exe is accessible")
+		return None
 
 class InvitationGeneratorApp(ctk.CTk):
 
@@ -884,6 +912,15 @@ class InvitationGeneratorApp(ctk.CTk):
 			self.log("🖼️ Stage 3/3: Converting PDF to PNG...")
 			png_converted = 0
 			
+			# Verify Poppler is working before starting batch conversion
+			if poppler_path:
+				self.log(f"Using Poppler from: {poppler_path}")
+				pdftoppm_exe = os.path.join(poppler_path, "pdftoppm.exe")
+				if not os.path.exists(pdftoppm_exe):
+					self.log(f"WARNING: pdftoppm.exe not found at {pdftoppm_exe}")
+			else:
+				self.log("Using system-installed Poppler (if available)")
+			
 			for i, pdf_path in enumerate(pdf_files):
 				if not self.is_generating:
 					self.log("Generation cancelled.")
@@ -891,20 +928,87 @@ class InvitationGeneratorApp(ctk.CTk):
 					
 				try:
 					png_path = pdf_path.replace('.pdf', '.png')
-					images = convert_from_path(pdf_path, dpi=200, fmt='png', poppler_path=poppler_path)
 					
-					if images:
-						images[0].save(png_path, 'PNG')
-						png_converted += 1
+					# Additional validation before conversion
+					if not os.path.exists(pdf_path):
+						self.log(f"ERROR: PDF file not found: {pdf_path}")
+						continue
+						
+					file_size = os.path.getsize(pdf_path)
+					if file_size == 0:
+						self.log(f"ERROR: PDF file is empty: {pdf_path}")
+						continue
+					
+					self.log(f"Converting PDF to PNG: {os.path.basename(pdf_path)} ({file_size} bytes)")
+					
+					# Try conversion with detailed error handling
+					try:
+						images = convert_from_path(
+							pdf_path, 
+							dpi=200, 
+							fmt='png', 
+							poppler_path=poppler_path,
+							first_page=1,
+							last_page=1  # Only convert first page
+						)
+						
+						if images and len(images) > 0:
+							images[0].save(png_path, 'PNG')
+							png_converted += 1
+							self.log(f"✅ PNG created: {os.path.basename(png_path)}")
+						else:
+							self.log(f"ERROR: No images returned from PDF: {os.path.basename(pdf_path)}")
+							
+					except Exception as conv_error:
+						error_msg = str(conv_error).lower()
+						if "unable to get page count" in error_msg:
+							self.log(f"PDF CONVERSION ERROR: Unable to read PDF structure - {os.path.basename(pdf_path)}")
+							self.log("This may be caused by:")
+							self.log("- Corrupted PDF file")
+							self.log("- Missing Poppler installation")
+							self.log("- Insufficient permissions")
+							self.log("- PDF created by incompatible software")
+							
+							# Try to provide specific solution
+							if poppler_path is None:
+								self.log("SOLUTION: Try installing Poppler manually or restart the application")
+							else:
+								self.log(f"SOLUTION: Verify Poppler installation at {poppler_path}")
+						else:
+							self.log(f"PDF CONVERSION ERROR: {conv_error}")
+						
+						# Try fallback conversion with different parameters
+						try:
+							self.log(f"Attempting fallback conversion for {os.path.basename(pdf_path)}...")
+							images = convert_from_path(
+								pdf_path, 
+								dpi=150,  # Lower DPI
+								fmt='png', 
+								poppler_path=poppler_path,
+								thread_count=1  # Single thread
+							)
+							if images and len(images) > 0:
+								images[0].save(png_path, 'PNG')
+								png_converted += 1
+								self.log(f"✅ Fallback conversion successful: {os.path.basename(png_path)}")
+							else:
+								self.log(f"❌ Fallback conversion failed: No images returned")
+						except Exception as fallback_error:
+							self.log(f"❌ Fallback conversion failed: {fallback_error}")
 					
 					# Update progress
 					progress = (selected_count * 2 + i + 1) / (selected_count * 3)
 					self.after(0, self.progress.set, progress)
 					
 				except Exception as e:
-					self.log(f"Error converting to PNG: {os.path.basename(pdf_path)} - {e}")
+					self.log(f"Unexpected error converting to PNG: {os.path.basename(pdf_path)} - {e}")
 			
 			self.log(f"✅ Stage 3 complete: {png_converted}/{len(pdf_files)} PNG files created")
+			
+			if png_converted < len(pdf_files):
+				failed_count = len(pdf_files) - png_converted
+				self.log(f"⚠️  {failed_count} PDF files could not be converted to PNG")
+				self.log("Note: DOCX and PDF files were created successfully")
 		
 		# Mark all generated files and update UI
 		for filename in generated_files:
@@ -980,13 +1084,46 @@ class InvitationGeneratorApp(ctk.CTk):
 				png_success = False
 				if out_pdf and os.path.exists(out_pdf):
 					try:
-						images = convert_from_path(out_pdf, dpi=200, fmt='png', poppler_path=poppler_path)
-						if images:
-							images[0].save(out_png, 'PNG')
-							self.log(f"PNG created: {out_png}")
-							png_success = True
+						file_size = os.path.getsize(out_pdf)
+						if file_size == 0:
+							self.log(f"ERROR: PDF file is empty: {filename}")
+						else:
+							images = convert_from_path(
+								out_pdf, 
+								dpi=200, 
+								fmt='png', 
+								poppler_path=poppler_path,
+								first_page=1,
+								last_page=1
+							)
+							if images:
+								images[0].save(out_png, 'PNG')
+								self.log(f"PNG created: {out_png}")
+								png_success = True
 					except Exception as e:
-						self.log(f"PNG conversion failed: {e}")
+						error_msg = str(e).lower()
+						if "unable to get page count" in error_msg:
+							self.log(f"PDF to PNG conversion failed for {filename}: Unable to read PDF structure")
+							self.log("This may indicate a corrupted PDF or missing Poppler installation")
+							
+							# Try fallback conversion
+							try:
+								self.log(f"Attempting fallback conversion for {filename}...")
+								images = convert_from_path(
+									out_pdf, 
+									dpi=150, 
+									fmt='png', 
+									poppler_path=poppler_path,
+									thread_count=1
+								)
+								if images:
+									images[0].save(out_png, 'PNG')
+									self.log(f"Fallback PNG conversion successful: {out_png}")
+									png_success = True
+							except Exception as fallback_error:
+								self.log(f"Fallback PNG conversion also failed: {fallback_error}")
+						else:
+							self.log(f"PNG conversion failed: {e}")
 				
 				# Mark as generated only if at least the DOCX was created successfully
 				self.mark_invitation_generated(filename, output_folder)
