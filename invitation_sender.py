@@ -7,6 +7,7 @@ from email.mime.image import MIMEImage
 import os
 import threading
 import queue
+import re
 
 import tkinter.filedialog as fd
 import json
@@ -35,19 +36,36 @@ class InvitationSenderApp(ctk.CTk):
         self.tracking_file = "sent_invitations.json"
         self.sent_invitations = self.load_sent_invitations()
         
+        # Initialize template saving
+        self.template_file = "email_templates.json"
+        
         # Initialize selection tracking
         self.selected_invitees = {}  # Dictionary to track checkbox states
         self.valid_email_invitees = {}  # Dictionary to track which invitees have valid emails
+        
+        # Email type selection
+        self.email_type_var = ctk.StringVar(value="invitation")
         
         # Cancel flag for sending process
         self.is_sending = False
         
         # Pagination for large datasets
-        self.items_per_page = 100
+        self.items_per_page = 30
         self.current_page = 0
         self.total_pages = 0
         
         self.create_widgets()
+        
+    def destroy(self):
+        """Override destroy to save template before closing"""
+        try:
+            # Auto-save the current template before closing
+            if hasattr(self, 'reminder_body_textbox') and hasattr(self, 'reminder_subject_entry'):
+                self.save_current_template()
+        except Exception as e:
+            print(f"Warning: Could not auto-save template: {e}")
+        finally:
+            super().destroy()
         
     def load_sent_invitations(self):
         """Load the record of sent invitations from JSON file"""
@@ -68,17 +86,137 @@ class InvitationSenderApp(ctk.CTk):
     def was_invitation_sent(self, email, name):
         """Check if an invitation was already sent to this person"""
         key = f"{email}|{name}"
-        return key in self.sent_invitations
+        if key not in self.sent_invitations:
+            return False
+        
+        # Handle legacy format (just sent_date) and new format (invitation_sent_date)
+        entry = self.sent_invitations[key]
+        return "invitation_sent_date" in entry or "sent_date" in entry
+        
+    def was_reminder_sent(self, email, name):
+        """Check if a reminder was already sent to this person"""
+        key = f"{email}|{name}"
+        return key in self.sent_invitations and "reminder_sent_date" in self.sent_invitations[key]
         
     def mark_invitation_sent(self, email, name):
         """Mark an invitation as sent for this person"""
         key = f"{email}|{name}"
-        self.sent_invitations[key] = {
-            "email": email,
-            "name": name,
-            "sent_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
+        if key not in self.sent_invitations:
+            self.sent_invitations[key] = {"email": email, "name": name, "invitation_history": [], "reminder_history": []}
+        
+        # Add this instance to the invitation history
+        if "invitation_history" not in self.sent_invitations[key]:
+            self.sent_invitations[key]["invitation_history"] = []
+        
+        self.sent_invitations[key]["invitation_history"].append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        
+        # Keep legacy field for backwards compatibility
+        self.sent_invitations[key]["invitation_sent_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.save_sent_invitations()
+        
+    def mark_reminder_sent(self, email, name):
+        """Mark a reminder as sent for this person"""
+        key = f"{email}|{name}"
+        if key not in self.sent_invitations:
+            self.sent_invitations[key] = {"email": email, "name": name, "invitation_history": [], "reminder_history": []}
+        
+        # Add this instance to the reminder history
+        if "reminder_history" not in self.sent_invitations[key]:
+            self.sent_invitations[key]["reminder_history"] = []
+            
+        self.sent_invitations[key]["reminder_history"].append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        
+        # Keep legacy field for backwards compatibility
+        self.sent_invitations[key]["reminder_sent_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.save_sent_invitations()
+
+    def get_invitation_count(self, email, name):
+        """Get the number of times an invitation was sent to this person"""
+        key = f"{email}|{name}"
+        if key not in self.sent_invitations:
+            return 0
+        
+        # Check for new format first
+        if "invitation_history" in self.sent_invitations[key]:
+            return len(self.sent_invitations[key]["invitation_history"])
+        
+        # Fall back to legacy format
+        if "invitation_sent_date" in self.sent_invitations[key] or "sent_date" in self.sent_invitations[key]:
+            return 1
+        
+        return 0
+    
+    def get_reminder_count(self, email, name):
+        """Get the number of times a reminder was sent to this person"""
+        key = f"{email}|{name}"
+        if key not in self.sent_invitations:
+            return 0
+        
+        # Check for new format first
+        if "reminder_history" in self.sent_invitations[key]:
+            return len(self.sent_invitations[key]["reminder_history"])
+        
+        # Fall back to legacy format
+        if "reminder_sent_date" in self.sent_invitations[key]:
+            return 1
+        
+        return 0
+
+    def load_email_templates(self):
+        """Load email templates from JSON file"""
+        if os.path.exists(self.template_file):
+            try:
+                with open(self.template_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                self.log("Warning: Template file corrupted, using defaults.")
+                return {}
+        return {}
+
+    def save_email_templates(self, templates):
+        """Save email templates to JSON file"""
+        try:
+            with open(self.template_file, 'w', encoding='utf-8') as f:
+                json.dump(templates, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            self.log(f"Warning: Could not save templates: {e}")
+
+    def save_current_template(self):
+        """Save the current reminder email template"""
+        if hasattr(self, 'reminder_body_textbox') and hasattr(self, 'reminder_subject_entry'):
+            current_body = self.reminder_body_textbox.get("1.0", "end-1c").strip()
+            current_subject = self.reminder_subject_entry.get().strip()
+            
+            templates = self.load_email_templates()
+            templates['reminder_body'] = current_body
+            templates['reminder_subject'] = current_subject
+            self.save_email_templates(templates)
+            self.log("Reminder template saved successfully!")
+
+    def reset_template(self):
+        """Reset the reminder email template to default"""
+        default_subject = "Reminder: National Day and Armed Forces Day of the Republic of Korea"
+        
+        default_body = """<p><b>Greetings from the Embassy of the Republic of Korea!</b></p>
+
+<p>This is a gentle reminder that the Reception in celebration of the <strong>National Day and Armed Forces Day of the Republic of Korea</strong> will take place on <b>Wednesday, 01 October 2025, at 6:30 p.m.</b>, at the Grand Ballroom, Grand Hyatt Manila, Taguig City. The attire for the event is Business Formal.</p>
+
+<p>If you have not yet registered, kindly RSVP via this link: <a href="https://forms.gle/QjdvdErNRRJBkvDz7">https://forms.gle/QjdvdErNRRJBkvDz7</a>. The deadline for submission is <b><u>17 September 2025</u></b>.</p>
+
+<p>We greatly look forward to welcoming you to the reception.</p>
+
+<p>With warm regards,<br>
+<b>Embassy of the Republic of Korea</b></p>"""
+        
+        if hasattr(self, 'reminder_body_textbox'):
+            self.reminder_body_textbox.delete("1.0", "end")
+            self.reminder_body_textbox.insert("1.0", default_body)
+            
+        if hasattr(self, 'reminder_subject_entry'):
+            self.reminder_subject_entry.delete(0, "end")
+            self.reminder_subject_entry.insert(0, default_subject)
+            
+        self.log("Template reset to default.")
 
     def create_widgets(self):
         # Use a main frame to control layout and allow expansion
@@ -157,6 +295,120 @@ class InvitationSenderApp(ctk.CTk):
         self.pass_entry = ctk.CTkEntry(email_creds_frame, show="*", width=250)
         self.pass_entry.pack(padx=5, pady=(0, 5), fill="x")
 
+        # Email type selection section
+        email_type_frame = ctk.CTkFrame(left_column)
+        email_type_frame.pack(pady=5, fill="x", padx=10)
+        ctk.CTkLabel(email_type_frame, text="Email Type:", font=("Arial", 12, "bold")).pack(anchor="w", padx=5)
+        
+        # Radio buttons for email type
+        type_buttons_frame = ctk.CTkFrame(email_type_frame, fg_color="transparent")
+        type_buttons_frame.pack(fill="x", padx=5, pady=(0, 5))
+        
+        self.invitation_radio = ctk.CTkRadioButton(
+            type_buttons_frame, 
+            text="Invitation Email", 
+            variable=self.email_type_var, 
+            value="invitation",
+            command=self.on_email_type_change
+        )
+        self.invitation_radio.pack(side="left", padx=5)
+        
+        self.reminder_radio = ctk.CTkRadioButton(
+            type_buttons_frame, 
+            text="Reminder Email", 
+            variable=self.email_type_var, 
+            value="reminder",
+            command=self.on_email_type_change
+        )
+        self.reminder_radio.pack(side="left", padx=15)
+
+        # Reminder email body section (initially hidden)
+        self.reminder_body_frame = ctk.CTkFrame(left_column)
+        self.reminder_body_frame.pack(pady=5, fill="both", expand=False, padx=10)
+        
+        # Header with title and save button
+        header_frame = ctk.CTkFrame(self.reminder_body_frame, fg_color="transparent")
+        header_frame.pack(fill="x", padx=5, pady=(5, 0))
+        
+        ctk.CTkLabel(header_frame, text="Reminder Email Body:", font=("Arial", 12, "bold")).pack(side="left", anchor="w")
+        
+        # Button frame for template buttons
+        button_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        button_frame.pack(side="right")
+        
+        self.reset_template_btn = ctk.CTkButton(
+            button_frame, 
+            text="Reset", 
+            width=60, 
+            height=24,
+            font=("Arial", 10),
+            command=self.reset_template
+        )
+        self.reset_template_btn.pack(side="right", padx=(0, 5))
+        
+        self.save_template_btn = ctk.CTkButton(
+            button_frame, 
+            text="Save Template", 
+            width=100, 
+            height=24,
+            font=("Arial", 10),
+            command=self.save_current_template
+        )
+        self.save_template_btn.pack(side="right")
+        
+        # HTML formatting help label
+        help_text = "HTML formatting: <b>bold</b>, <i>italic</i>, <u>underline</u>, <a href='url'>links</a>, <br> line breaks, <p>paragraphs</p>"
+        ctk.CTkLabel(self.reminder_body_frame, text=help_text, font=("Arial", 9), text_color="gray").pack(anchor="w", padx=5, pady=(0, 5))
+        
+        # Subject line section
+        subject_frame = ctk.CTkFrame(self.reminder_body_frame, fg_color="transparent")
+        subject_frame.pack(fill="x", padx=5, pady=(0, 5))
+        
+        ctk.CTkLabel(subject_frame, text="Subject:", font=("Arial", 11, "bold")).pack(side="left", padx=(0, 5))
+        
+        self.reminder_subject_entry = ctk.CTkEntry(subject_frame, placeholder_text="Email subject line")
+        self.reminder_subject_entry.pack(side="right", fill="x", expand=True)
+        
+        # Email body section
+        ctk.CTkLabel(self.reminder_body_frame, text="Email Body:", font=("Arial", 11, "bold")).pack(anchor="w", padx=5, pady=(5, 0))
+        
+        self.reminder_body_textbox = ctk.CTkTextbox(self.reminder_body_frame, height=150, wrap="word")
+        self.reminder_body_textbox.pack(fill="both", expand=True, padx=5, pady=(0, 5))
+        
+        # Load saved template or use default
+        templates = self.load_email_templates()
+        
+        if 'reminder_subject' in templates and templates['reminder_subject'].strip():
+            # Use saved subject
+            saved_subject = templates['reminder_subject']
+            self.reminder_subject_entry.insert(0, saved_subject)
+        else:
+            # Set default subject
+            default_subject = "Reminder: National Day and Armed Forces Day of the Republic of Korea"
+            self.reminder_subject_entry.insert(0, default_subject)
+        
+        if 'reminder_body' in templates and templates['reminder_body'].strip():
+            # Use saved template
+            saved_body = templates['reminder_body']
+            self.reminder_body_textbox.insert("1.0", saved_body)
+        else:
+            # Set default reminder email body with official Embassy format
+            default_body = """<p><b>Greetings from the Embassy of the Republic of Korea!</b></p>
+
+<p>This is a gentle reminder that the Reception in celebration of the <strong>National Day and Armed Forces Day of the Republic of Korea</strong> will take place on <b>Wednesday, 01 October 2025, at 6:30 p.m.</b>, at the Grand Ballroom, Grand Hyatt Manila, Taguig City. The attire for the event is Business Formal.</p>
+
+<p>If you have not yet registered, kindly RSVP via this link: <a href="https://forms.gle/QjdvdErNRRJBkvDz7">https://forms.gle/QjdvdErNRRJBkvDz7</a>. The deadline for submission is <b><u>17 September 2025</u></b>.</p>
+
+<p>We greatly look forward to welcoming you to the reception.</p>
+
+<p>With warm regards,<br>
+<b>Embassy of the Republic of Korea</b></p>"""
+            
+            self.reminder_body_textbox.insert("1.0", default_body)
+        
+        # Initially hide reminder body frame
+        self.reminder_body_frame.pack_forget()
+
         # Log area
         log_frame = ctk.CTkFrame(left_column)
         log_frame.pack(fill="both", expand=True, padx=10, pady=5)
@@ -231,6 +483,21 @@ class InvitationSenderApp(ctk.CTk):
 
         self.result_label = ctk.CTkLabel(send_frame, text="...", font=("Arial", 12))
         self.result_label.pack(pady=(0, 5))
+
+    def on_email_type_change(self):
+        """Handle email type selection change"""
+        email_type = self.email_type_var.get()
+        if email_type == "reminder":
+            # Show reminder body frame
+            self.reminder_body_frame.pack(pady=5, fill="both", expand=False, padx=10)
+            self.send_btn.configure(text="Send Reminders")
+        else:
+            # Hide reminder body frame
+            self.reminder_body_frame.pack_forget()
+            self.send_btn.configure(text="Send Invitations")
+        
+        # Update status list to reflect current email type
+        self.update_status_list()
 
     def prev_page(self):
         """Go to previous page"""
@@ -350,7 +617,7 @@ class InvitationSenderApp(ctk.CTk):
         self.log(f"Deselected all {count} invitees.")
 
     def select_unsent_invitees(self):
-        """Select only invitees with valid emails who haven't been sent invitations yet (across all pages)"""
+        """Select only invitees with valid emails who haven't been sent the current email type yet (across all pages)"""
         if not hasattr(self, 'invitees') or self.invitees is None:
             return
 
@@ -361,6 +628,8 @@ class InvitationSenderApp(ctk.CTk):
 
         selected_count = 0
         total_count = 0
+        email_type = self.email_type_var.get()
+        type_name = "invitations" if email_type == "invitation" else "reminders"
         
         # Work with all invitees, not just visible ones
         for idx, row in self.invitees.iterrows():
@@ -382,7 +651,11 @@ class InvitationSenderApp(ctk.CTk):
             
             # Only consider invitees with valid emails
             if has_valid_email:
-                if not self.was_invitation_sent(email, name):
+                # Check if this email type was already sent (using count > 0)
+                current_count = (self.get_invitation_count(email, name) if email_type == "invitation" 
+                               else self.get_reminder_count(email, name))
+                
+                if current_count == 0:  # Never sent this type before
                     self.selected_invitees[key].set(True)
                     selected_count += 1
                 else:
@@ -390,7 +663,7 @@ class InvitationSenderApp(ctk.CTk):
             else:
                 self.selected_invitees[key].set(False)  # Ensure invalid emails stay deselected
                 
-        self.log(f"Selected {selected_count} unsent invitees with valid emails out of {total_count} total.")
+        self.log(f"Selected {selected_count} unsent {type_name} with valid emails out of {total_count} total.")
 
     def clear_status_list(self):
         """Clear status widgets but preserve selection state"""
@@ -438,14 +711,16 @@ class InvitationSenderApp(ctk.CTk):
             
             # Check if email is valid
             has_valid_email = self.is_valid_email(email)
-            is_sent = self.was_invitation_sent(email, name) if has_valid_email else False
+            invitation_count = self.get_invitation_count(email, name) if has_valid_email else 0
+            reminder_count = self.get_reminder_count(email, name) if has_valid_email else 0
             
             invitee_data.append({
                 'idx': idx,
                 'name': name,
                 'email': email,
                 'has_valid_email': has_valid_email,
-                'is_sent': is_sent
+                'invitation_count': invitation_count,
+                'reminder_count': reminder_count
             })
         
         # Now create UI elements in batch
@@ -457,9 +732,11 @@ class InvitationSenderApp(ctk.CTk):
         name = data['name']
         email = data['email'] 
         has_valid_email = data['has_valid_email']
-        is_sent = data['is_sent']
+        invitation_count = data['invitation_count']
+        reminder_count = data['reminder_count']
         
         key = f"{email}|{name}"
+        email_type = self.email_type_var.get()
         
         # Create frame for this invitee
         frame = ctk.CTkFrame(self.scrollable_frame)
@@ -482,11 +759,8 @@ class InvitationSenderApp(ctk.CTk):
             previous_state = self.selected_invitees[key].get()
             checkbox_var.set(previous_state)
         else:
-            # Set default selection
-            if not has_valid_email:
-                checkbox_var.set(False)  # Don't select invalid emails
-            else:
-                checkbox_var.set(not is_sent)  # Select unsent invitees by default
+            # Set default selection - always allow sending (no skipping based on previous sends)
+            checkbox_var.set(has_valid_email)  # Select all valid emails by default
         
         # Store checkbox variable and email validity for later use
         self.selected_invitees[key] = checkbox_var
@@ -506,21 +780,25 @@ class InvitationSenderApp(ctk.CTk):
         info_label = ctk.CTkLabel(frame, text=info_text, anchor="w", text_color=text_color)
         info_label.pack(side="left", padx=5, fill="x", expand=True)
         
-        # Status label
-        status_label = ctk.CTkLabel(frame, text="", anchor="e", width=120)
+        # Status label - now shows counts for both invitation and reminder
+        status_label = ctk.CTkLabel(frame, text="", anchor="e", width=180)
         status_label.pack(side="right", padx=5)
         
         # Store label reference for updates
         self.status_labels[key] = status_label
         
-        # Update status
+        # Update status to show counts
         if not has_valid_email:
             status_label.configure(text="Cannot send", text_color="red")
-        elif is_sent:
-            sent_date = self.sent_invitations[key]["sent_date"]
-            status_label.configure(text=f"Sent ✓", text_color="green")
         else:
-            status_label.configure(text="Not sent", text_color="gray")
+            status_text = f"Inv: {invitation_count} | Rem: {reminder_count}"
+            
+            # Color based on current email type count
+            current_count = invitation_count if email_type == "invitation" else reminder_count
+            if current_count > 0:
+                status_label.configure(text=status_text, text_color="green")
+            else:
+                status_label.configure(text=status_text, text_color="gray")
 
     def update_invitee_status(self, email, name):
         """Update the status display for a single invitee"""
@@ -529,11 +807,19 @@ class InvitationSenderApp(ctk.CTk):
             return
             
         label = self.status_labels[key]
-        if self.was_invitation_sent(email, name):
-            sent_date = self.sent_invitations[key]["sent_date"]
-            label.configure(text=f"Sent on {sent_date}", text_color="green")
+        invitation_count = self.get_invitation_count(email, name)
+        reminder_count = self.get_reminder_count(email, name)
+        email_type = self.email_type_var.get()
+        
+        # Build status text with counts
+        status_text = f"Inv: {invitation_count} | Rem: {reminder_count}"
+        
+        # Color based on current email type count
+        current_count = invitation_count if email_type == "invitation" else reminder_count
+        if current_count > 0:
+            label.configure(text=status_text, text_color="green")
         else:
-            label.configure(text="Not sent", text_color="gray")
+            label.configure(text=status_text, text_color="gray")
 
     def open_excel(self):
         file_path = fd.askopenfilename(filetypes=[("Excel Files", "*.xlsx *.xls")])
@@ -709,12 +995,91 @@ class InvitationSenderApp(ctk.CTk):
         except Exception as e:
             return False, str(e)
 
+    def send_single_reminder(self, sender_email, sender_pass, name, recipient, img_filename, reminder_body, reminder_subject):
+        """Send a single reminder email and return the result"""
+        try:
+            msg = EmailMessage()
+            msg["Subject"] = reminder_subject
+            msg["From"] = sender_email
+            msg["To"] = recipient
+            
+            # Replace [Name] placeholder in the body
+            personalized_body = reminder_body.replace("[Name]", name)
+            
+            # Check if the body contains HTML tags
+            has_html = any(tag in personalized_body.lower() for tag in ['<b>', '<i>', '<u>', '<strong>', '<em>', '<a', '<br', '<p>', '<div>'])
+            
+            # Create plain text version first
+            plain_text = personalized_body
+            if has_html:
+                # Remove HTML tags for plain text version
+                plain_text = re.sub(r'<[^>]+>', '', personalized_body)
+                plain_text = plain_text.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+            
+            # Set the plain text content first
+            msg.set_content(plain_text)
+            
+            # Add HTML version if HTML tags are present
+            if has_html:
+                # Convert line breaks to <br> tags for proper HTML display
+                html_content = personalized_body.replace('\n', '<br>')
+                msg.add_alternative(f"""
+                <html>
+                  <body>
+                    {html_content}
+                  </body>
+                </html>
+                """, subtype='html')
+            else:
+                # Even for plain text, add HTML version with line breaks converted
+                html_body = personalized_body.replace('\n', '<br>')
+                msg.add_alternative(f"""
+                <html>
+                  <body>
+                    {html_body}
+                  </body>
+                </html>
+                """, subtype='html')
+            
+            # Attach the invitation image as an attachment
+            with open(img_filename, 'rb') as img:
+                img_data = img.read()
+                msg.add_attachment(img_data, 
+                                 maintype='image',
+                                 subtype='png',
+                                 filename=f"Invitation - {name}.png")
+
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+                smtp.login(sender_email, sender_pass)
+                smtp.send_message(msg)
+            return True, None
+        except Exception as e:
+            return False, str(e)
+
     def send_invitations_thread(self, sender_email, sender_pass, email_col, name_col):
-        """Thread function for sending invitations"""
+        """Thread function for sending invitations or reminders"""
         sent_count = 0
         failed = []
         skipped = 0
         selected_count = 0
+        email_type = self.email_type_var.get()
+        
+        # Get reminder body and subject if sending reminders
+        reminder_body = None
+        reminder_subject = None
+        if email_type == "reminder":
+            reminder_body = self.reminder_body_textbox.get("1.0", "end-1c").strip()
+            reminder_subject = self.reminder_subject_entry.get().strip()
+            
+            if not reminder_body:
+                self.after(0, self.log, "Reminder email body is empty!")
+                self.after(0, self.finish_sending, 0, 0, [("", "Reminder body is empty")])
+                return
+                
+            if not reminder_subject:
+                self.after(0, self.log, "Reminder email subject is empty!")
+                self.after(0, self.finish_sending, 0, 0, [("", "Reminder subject is empty")])
+                return
         
         # First, count selected invitees with valid emails
         for idx, row in self.invitees.iterrows():
@@ -729,11 +1094,13 @@ class InvitationSenderApp(ctk.CTk):
                     selected_count += 1
         
         if selected_count == 0:
-            self.after(0, self.log, "No invitees selected for sending.")
+            type_name = "invitations" if email_type == "invitation" else "reminders"
+            self.after(0, self.log, f"No invitees selected for sending {type_name}.")
             self.after(0, self.finish_sending, 0, 0, [])
             return
         
-        self.after(0, self.log, f"Starting to send {selected_count} selected invitations...")
+        type_name = "invitations" if email_type == "invitation" else "reminders"
+        self.after(0, self.log, f"Starting to send {selected_count} selected {type_name}...")
         current_processed = 0
         
         for idx, row in self.invitees.iterrows():
@@ -762,12 +1129,6 @@ class InvitationSenderApp(ctk.CTk):
             # Update progress in the main thread
             self.after(0, self.update_progress, current_processed, selected_count, f"Processing: {name} ({recipient})")
             
-            # Check if invitation was already sent
-            if self.was_invitation_sent(recipient, name):
-                self.after(0, self.log, f"[SKIPPED] Already sent to {name} ({recipient})")
-                skipped += 1
-                continue
-                
             img_filename = self.find_invitation_image(name)
             if img_filename is None:
                 # Try to provide helpful info about what files we looked for
@@ -777,22 +1138,36 @@ class InvitationSenderApp(ctk.CTk):
                 self.after(0, self.log, f"[{recipient}] Invitation image not found. Expected: {expected_filename}")
                 continue
 
-            success, error = self.send_single_invitation(sender_email, sender_pass, name, recipient, img_filename)
+            # Send the appropriate email type
+            if email_type == "invitation":
+                success, error = self.send_single_invitation(sender_email, sender_pass, name, recipient, img_filename)
+            else:  # reminder
+                success, error = self.send_single_reminder(sender_email, sender_pass, name, recipient, img_filename, reminder_body, reminder_subject)
+                
             if success:
                 sent_count += 1
-                self.mark_invitation_sent(recipient, name)
+                if email_type == "invitation":
+                    self.mark_invitation_sent(recipient, name)
+                else:
+                    self.mark_reminder_sent(recipient, name)
+                    
                 self.after(0, self.update_invitee_status, recipient, name)
-                self.after(0, self.log, f"[{recipient}] Invitation sent successfully.")
+                type_name = "invitation" if email_type == "invitation" else "reminder"
+                self.after(0, self.log, f"[{recipient}] {type_name.title()} sent successfully.")
             else:
                 failed.append((recipient, error))
-                self.after(0, self.log, f"[{recipient}] Failed to send: {error}")
+                type_name = "invitation" if email_type == "invitation" else "reminder"
+                self.after(0, self.log, f"[{recipient}] Failed to send {type_name}: {error}")
 
         # Update final results in the main thread
         self.after(0, self.finish_sending, sent_count, skipped, failed)
 
     def finish_sending(self, sent_count, skipped, failed):
         """Update UI after sending is complete"""
-        result_msg = f"Sent: {sent_count} invitations."
+        email_type = self.email_type_var.get()
+        type_name = "invitations" if email_type == "invitation" else "reminders"
+        
+        result_msg = f"Sent: {sent_count} {type_name}."
         if skipped:
             result_msg += f"\nSkipped (already sent): {skipped}"
         if failed:
@@ -824,6 +1199,15 @@ class InvitationSenderApp(ctk.CTk):
             self.result_label.configure(text="Select email and name columns.", text_color="red")
             self.log("Email or name column not selected.")
             return
+        
+        # Validate reminder body if sending reminders
+        email_type = self.email_type_var.get()
+        if email_type == "reminder":
+            reminder_body = self.reminder_body_textbox.get("1.0", "end-1c").strip()
+            if not reminder_body:
+                self.result_label.configure(text="Enter reminder email body.", text_color="red")
+                self.log("Reminder email body is empty.")
+                return
 
         # Start sending process
         self.is_sending = True
@@ -831,7 +1215,8 @@ class InvitationSenderApp(ctk.CTk):
         
         # Show progress bar
         self.progress_frame.pack(pady=5, fill="x", padx=10)
-        self.log(f"Starting to send invitations from {sender_email}...")
+        type_name = "invitations" if email_type == "invitation" else "reminders"
+        self.log(f"Starting to send {type_name} from {sender_email}...")
         
         # Start sending thread
         threading.Thread(
@@ -843,7 +1228,9 @@ class InvitationSenderApp(ctk.CTk):
     def reset_send_button(self):
         """Reset the send button to its original state"""
         self.is_sending = False
-        self.send_btn.configure(text="Send Invitations", fg_color=["#1f538d", "#14375e"])
+        email_type = self.email_type_var.get()
+        button_text = "Send Invitations" if email_type == "invitation" else "Send Reminders"
+        self.send_btn.configure(text=button_text, fg_color=["#1f538d", "#14375e"])
         self.progress_frame.pack_forget()  # Hide progress bar
 
     def _send_invitations_thread(self, sender_email, sender_pass, email_col, name_col):
