@@ -94,6 +94,70 @@ Use this tool to send three-digit attendance codes from an Excel file:
 
 Codes are converted to three-digit values, so a value such as `7` is sent as `007`. The email body supports `[Name]` and `[Code]` placeholders.
 
+## Required File Formats
+
+### Excel Workbooks
+
+All Excel tools accept `.xlsx` and `.xls` files and read the first worksheet. The first row must contain column headers, followed by one guest or attendee per row.
+
+| Tool | Required data | Default or recommended headers | Notes |
+| --- | --- | --- | --- |
+| Guest List Processor | Guest name and email | `Name`, `Email` | These headers are editable in the GUI. Blank names or email addresses are skipped. |
+| Invitation Generator | Data for each template field | `Name` is recommended, plus any mapped fields such as `Organization` or `Code` | Every placeholder in the DOCX template must be mapped to an Excel column. |
+| Invitation Sender | Recipient name and email | `Name`, `Email` | The GUI lets you select different headers. Invalid email addresses cannot be selected. |
+| Attendance Code Sender | Attendee name, email, and attendance code | `Name`, `Email`, `Code` | The GUI lets you select different headers. Codes are converted to three digits. |
+
+Example workbook:
+
+| Name | Email | Organization | Code |
+| --- | --- | --- | --- |
+| Jane Smith | jane.smith@example.com | Example Organization | 7 |
+| John Lee | john.lee@example.com | Embassy Office | 042 |
+
+Recommended spreadsheet practices:
+
+- Keep headers in row 1 and avoid merged cells in the header row.
+- Keep one person per row.
+- Store email addresses as text and remove leading or trailing spaces.
+- Do not use formulas that produce errors in required fields.
+- Keep names and email addresses consistent between generation and sending. The sender uses the name to find the matching invitation PNG.
+
+### DOCX Invitation Templates
+
+Invitation templates must be Microsoft Word `.docx` files. Use `docxtpl` placeholders with a simple word-style name, for example:
+
+```text
+{{ name }}
+{{ organization }}
+{{ code }}
+```
+
+The generator scans the template for placeholders, then provides a dropdown for each placeholder. Map every placeholder to the Excel header that supplies its value. Placeholder names do not have to match Excel headers, because the mapping is selected in the GUI.
+
+### Generated Invitation Files
+
+The generator creates files using the cleaned guest name:
+
+```text
+Invitation - Jane Smith.docx
+Invitation - Jane Smith.pdf
+Invitation - Jane Smith.png
+```
+
+The Invitation Sender looks for the PNG using this naming convention. The name in the sender's Excel file must therefore correspond to the name used during generation after invalid Windows filename characters, dots, and extra whitespace have been cleaned. For example, `Jane/Smith` becomes `Jane Smith` in the filename.
+
+### Email Templates
+
+Attendance-code emails support these plain-text placeholders:
+
+```text
+Dear [Name],
+
+Your attendance code is [Code].
+```
+
+Reminder emails support `[Name]` and HTML formatting such as `<b>`, `<i>`, `<u>`, `<a href="...">`, `<br>`, and `<p>`. Invitation emails use the generated PNG invitation and do not require a separate email-template file.
+
 ## Requirements
 
 - Windows is recommended because the batch launchers and DOCX/PDF workflow target Windows.
