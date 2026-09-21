@@ -401,9 +401,15 @@ class InvitationSenderApp(ctk.CTk):
             # Set default reminder email body with official Embassy format
             default_body = """<p><b>Greetings from the Embassy of the Republic of Korea!</b></p>
 
-<p>This is a gentle reminder that the Reception in celebration of the <strong>National Day and Armed Forces Day of the Republic of Korea</strong> will take place on <b>Wednesday, 01 October 2025, at 6:30 p.m.</b>, at the Grand Ballroom, Grand Hyatt Manila, Taguig City. The attire for the event is Business Formal.</p>
+<p>This is a gentle reminder that the reception in celebration of the <strong>National Day and Armed Forces Day of the Republic of Korea</strong> will be held on <b>Thursday, 01 October 2026, at 6:30 p.m.</b>, at the Grand Ballroom, Grand Hyatt Manila, Taguig City.</p>
 
-<p>If you have not yet registered, kindly RSVP via this link: <a href="https://forms.gle/QjdvdErNRRJBkvDz7">https://forms.gle/QjdvdErNRRJBkvDz7</a>. The deadline for submission is <b><u>17 September 2025</u></b>.</p>
+<p>Attire: Business Formal/ Service Blouse (Long Sleeves).</p>
+
+<p>If you have not yet registered, kindly RSVP via this link: <a href=\"https://forms.gle/kH2eFaVzkkvYYkS98\">https://forms.gle/kH2eFaVzkkvYYkS98</a></p>
+
+<p>Please note that each guest may be accompanied by one (1) spouse or colleague only. The accompanying guest must also register through the above link. An attendance code will be sent to all guests upon completion of the RSVP and this code must be presented upon entry to the reception. \nFor accompanying guests, please indicate the name of the principal guest in the “Contact person (Name, Title, and Contact Number)” section when completing the registration form.</p>
+
+<p><u>The deadline for registration is Friday, 25 September 2026.</u></p>
 
 <p>We greatly look forward to welcoming you to the reception.</p>
 
